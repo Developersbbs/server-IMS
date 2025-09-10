@@ -33,6 +33,7 @@ exports.getAllBills = async (req, res) => {
       total
     });
   } catch (err) {
+    console.error("Error in getAllBills:", err); // Log for debugging
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
@@ -45,42 +46,136 @@ exports.getBillById = async (req, res) => {
     }
     res.status(200).json(bill);
   } catch (err) {
+    console.error("Error in getBillById:", err); // Log for debugging
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
 
 exports.createBill = async (req, res) => {
+  let session;
   try {
-    const billData = req.body;
-    billData.createdBy = req.user._id;
-    
-    // Calculate totals
-    billData.subtotal = billData.items.reduce((sum, item) => sum + item.total, 0);
-    billData.totalAmount = billData.subtotal + (billData.taxAmount || 0) - (billData.discount || 0);
-    billData.dueAmount = billData.totalAmount - (billData.paidAmount || 0);
-    
+    const billData = { ...req.body }; // Create a copy to avoid modifying req.body directly
+    billData.createdBy = req.user._id; // Assuming req.user is populated by auth middleware
+
+    // --- FIX 1: Fetch Customer Details ---
+    if (!billData.customerId) {
+       return res.status(400).json({ message: 'Customer ID is required.' });
+    }
+    const customer = await Customer.findById(billData.customerId);
+    if (!customer) {
+       return res.status(400).json({ message: 'Invalid Customer ID provided.' });
+    }
+    billData.customerName = customer.name;
+    billData.customerEmail = customer.email;
+    billData.customerPhone = customer.phone || ''; // Handle potential missing phone
+
+    // --- FIX 2: Align Payment Method ---
+    // Convert frontend 'bank' value to schema 'bank_transfer'
+    if (billData.paymentMethod === 'bank') {
+        billData.paymentMethod = 'bank_transfer';
+    }
+    // Validate paymentMethod against schema enum
+    const validPaymentMethods = ['cash', 'card', 'upi', 'bank_transfer', 'credit'];
+    if (!validPaymentMethods.includes(billData.paymentMethod)) {
+         return res.status(400).json({ message: `Invalid payment method '${billData.paymentMethod}' provided.` });
+    }
+
+    // --- Validate Items ---
+    if (!billData.items || !Array.isArray(billData.items) || billData.items.length === 0) {
+        return res.status(400).json({ message: 'Bill must contain at least one item.' });
+    }
+    // Validate individual item fields
+    for (let i = 0; i < billData.items.length; i++) {
+        const item = billData.items[i];
+        if (!item.productId) {
+             return res.status(400).json({ message: `Item ${i + 1}: Product ID is required.` });
+        }
+        if (typeof item.quantity !== 'number' || item.quantity <= 0) {
+             return res.status(400).json({ message: `Item ${i + 1}: Quantity must be a number greater than 0.` });
+        }
+        if (typeof item.price !== 'number' || item.price < 0) {
+             return res.status(400).json({ message: `Item ${i + 1}: Price must be a non-negative number.` });
+        }
+        if (typeof item.total !== 'number' || item.total < 0) {
+             return res.status(400).json({ message: `Item ${i + 1}: Total must be a non-negative number.` });
+        }
+        // Optional: Fetch product to verify details (name, price consistency) if needed
+        // const product = await Product.findById(item.productId);
+        // if (!product) {
+        //    return res.status(400).json({ message: `Item ${i + 1}: Invalid Product ID.` });
+        // }
+        // billData.items[i].name = product.name; // Ensure name matches product
+    }
+
+    // --- Calculate Totals (Sanitize inputs) ---
+    billData.subtotal = parseFloat((billData.items.reduce((sum, item) => sum + (item.total || 0), 0)).toFixed(2));
+    billData.taxAmount = parseFloat((billData.taxAmount || 0).toFixed(2));
+    billData.discount = parseFloat((billData.discount || 0).toFixed(2));
+    billData.totalAmount = parseFloat((billData.subtotal + billData.taxAmount - billData.discount).toFixed(2));
+    billData.paidAmount = parseFloat((billData.paidAmount || 0).toFixed(2));
+    billData.dueAmount = parseFloat((billData.totalAmount - billData.paidAmount).toFixed(2));
+
+    // Basic validation of calculated amounts
+    if (billData.subtotal < 0) {
+        return res.status(400).json({ message: 'Subtotal cannot be negative.' });
+    }
+    if (billData.totalAmount < 0) {
+        return res.status(400).json({ message: 'Total amount cannot be negative.' });
+    }
+    if (billData.dueAmount < 0) {
+         return res.status(400).json({ message: 'Due amount cannot be negative.' });
+    }
+
+    // --- Create the Bill ---
+    // Mongoose will trigger the pre('validate') hook to generate billNumber
     const bill = new Bill(billData);
     await bill.save();
-    
-    // Update customer outstanding balance if credit
-    if (billData.paymentMethod === 'credit') {
+
+    // --- Update customer outstanding balance if applicable ---
+    // Example logic: If payment is pending or partial, or method is credit, update balance.
+    // Adjust this logic based on your specific business rules.
+    if (bill.paymentMethod === 'credit' || (bill.paymentStatus === 'pending' && bill.dueAmount > 0) || bill.paymentStatus === 'partial') {
       await Customer.findByIdAndUpdate(
-        billData.customerId,
-        { $inc: { outstandingBalance: billData.dueAmount } }
+        bill.customerId,
+        { $inc: { outstandingBalance: bill.dueAmount } },
+        { new: true, runValidators: true } // Options for findByIdAndUpdate
       );
     }
-    
-    res.status(201).json({ 
+
+    // Populate customerId for the response if needed by frontend
+    await bill.populate('customerId', 'name email phone');
+
+    res.status(201).json({
       message: 'Bill created successfully',
-      bill 
+      bill
     });
   } catch (err) {
-    res.status(500).json({ message: 'Server error', error: err.message });
+    console.error("Error creating bill:", err); // Log the actual error for debugging
+
+    // Differentiate between validation errors and server errors
+    if (err.name === 'ValidationError') {
+        // Extract specific error messages from Mongoose ValidationError
+        const messages = Object.values(err.errors).map(e => e.message);
+        return res.status(400).json({ message: 'Validation Error', errors: messages }); // Use 'errors' array
+    }
+    // Mongoose CastError (e.g., invalid ObjectId format)
+    if (err.name === 'CastError') {
+         return res.status(400).json({ message: 'Invalid data format', error: err.message });
+    }
+    // Handle other potential Mongoose errors (e.g., duplicate key)
+    if (err.code === 11000) { // Duplicate key error
+         const duplicateField = Object.keys(err.keyValue)[0];
+         return res.status(400).json({ message: `Duplicate entry`, error: `A bill with this ${duplicateField} already exists.` });
+    }
+
+    res.status(500).json({ message: 'Server error during bill creation', error: err.message });
   }
 };
 
 exports.updateBill = async (req, res) => {
   try {
+    // Consider similar validation and data fetching as in createBill if needed for updates
+    // Be careful with updates that might affect financial calculations or customer balances.
     const bill = await Bill.findByIdAndUpdate(
       req.params.id,
       req.body,
@@ -96,6 +191,15 @@ exports.updateBill = async (req, res) => {
       bill 
     });
   } catch (err) {
+    console.error("Error in updateBill:", err); // Log for debugging
+    // Add specific error handling like in createBill if necessary
+    if (err.name === 'ValidationError') {
+        const messages = Object.values(err.errors).map(e => e.message);
+        return res.status(400).json({ message: 'Validation Error', errors: messages }); // Use 'errors' array
+    }
+    if (err.name === 'CastError') {
+         return res.status(400).json({ message: 'Invalid data format', error: err.message });
+    }
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
@@ -110,6 +214,7 @@ exports.deleteBill = async (req, res) => {
     
     res.status(200).json({ message: 'Bill deleted successfully' });
   } catch (err) {
+    console.error("Error in deleteBill:", err); // Log for debugging
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
@@ -145,6 +250,7 @@ exports.getBillsStats = async (req, res) => {
       totalRevenue: totalRevenue[0]?.total || 0
     });
   } catch (err) {
+    console.error("Error in getBillsStats:", err); // Log for debugging
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
@@ -171,6 +277,7 @@ exports.generateInvoice = async (req, res) => {
     
     res.status(200).json(invoice);
   } catch (err) {
+    console.error("Error in generateInvoice:", err); // Log for debugging
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };

@@ -53,7 +53,21 @@ const customerSchema = new mongoose.Schema({
     trim: true
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  // Enable virtual fields and ensure they are serialized to JSON
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true }
+});
+
+// --- Add Virtual Field for Billing History ---
+// This creates a virtual 'bills' property on the Customer document
+// It finds all Bill documents where the customerId matches this customer's _id
+customerSchema.virtual('bills', {
+  ref: 'Bill', // The model to use
+  localField: '_id', // Find Bill where `customerId` (in Bill schema)
+  foreignField: 'customerId', // is equal to `_id` (in Customer schema)
+  // If you want only specific fields, you can add `select: 'billNumber totalAmount billDate'`
+  // If you want the latest bills first, you can add `options: { sort: { billDate: -1 } }`
 });
 
 module.exports = mongoose.model('Customer', customerSchema);

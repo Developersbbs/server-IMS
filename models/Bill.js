@@ -30,7 +30,7 @@ const itemSchema = new mongoose.Schema({
 const billSchema = new mongoose.Schema({
   billNumber: {
     type: String,
-    required: true,
+    // required: true, // Moved to post-validation setup
     unique: true
   },
   customerId: {
@@ -111,13 +111,44 @@ const billSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Generate bill number
-billSchema.pre('save', async function(next) {
-  if (this.isNew) {
-    const count = await mongoose.model('Bill').countDocuments();
-    this.billNumber = `BILL-${String(count + 1).padStart(6, '0')}`;
+// --- IMPROVED Generate bill number hook ---
+billSchema.pre('validate', async function(next) {
+  // Only generate billNumber if it's a new document and billNumber is not already set
+  if (this.isNew && !this.billNumber) {
+    try {
+      // Find the highest existing bill number and increment
+      // Using `sort` and `limit` is generally more reliable than `countDocuments`
+      // especially if documents can be deleted.
+      const lastBill = await this.constructor // Use this.constructor instead of mongoose.model('Bill')
+        .findOne({}, { billNumber: 1 })
+        .sort({ createdAt: -1 }) // Sort by creation date descending
+        .limit(1)
+        .exec();
+
+      let nextNumber = 1;
+      if (lastBill && lastBill.billNumber) {
+        // Extract the number part from the last bill number (e.g., "000012" from "BILL-000012")
+        const lastNumberString = lastBill.billNumber.split('-')[1];
+        const lastNumber = parseInt(lastNumberString, 10);
+        if (!isNaN(lastNumber)) {
+          nextNumber = lastNumber + 1;
+        }
+      }
+
+      this.billNumber = `BILL-${String(nextNumber).padStart(6, '0')}`;
+      // console.log(`Generated billNumber for new bill: ${this.billNumber}`); // Optional: for debugging
+    } catch (err) {
+      // If there's an error generating the bill number, pass it to the next middleware
+      // This will prevent saving the document and report the error
+      console.error("Error generating bill number:", err); // Log the specific error
+      return next(err);
+    }
   }
   next();
 });
+
+// Re-add the required validator *after* the pre-validate hook
+// This ensures validation runs, but only after the hook has had a chance to populate billNumber
+billSchema.path('billNumber').required(true, 'Bill number is required');
 
 module.exports = mongoose.model('Bill', billSchema);

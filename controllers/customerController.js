@@ -47,6 +47,24 @@ exports.getCustomerById = async (req, res) => {
   }
 };
 
+exports.getCustomerById = async (req, res) => {
+  try {
+    // --- Populate the virtual 'bills' field ---
+    // You can specify which fields to populate from the Bill model
+    const customer = await Customer.findById(req.params.id)
+                                   .populate('bills', 'billNumber totalAmount billDate paymentStatus'); // Populate only necessary fields
+
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found' });
+    }
+    res.status(200).json(customer);
+  } catch (err) {
+    console.error("Error fetching customer by ID:", err); // Log the error
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+
 exports.createCustomer = async (req, res) => {
   try {
     const customerData = req.body;

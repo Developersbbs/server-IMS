@@ -7,6 +7,8 @@ const productRoutes = require('./routes/productRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const userManagementRoutes = require('./routes/userManagementroutes');
 const supplierRoutes = require('./routes/supplierRoutes');
+const customerRoutes = require('./routes/customerRoutes');
+const billRoutes = require('./routes/billRoutes');
 const cors = require("cors"); 
 const cookieParser = require('cookie-parser');
 const mongoose = require("mongoose");
@@ -15,7 +17,6 @@ console.log("ENV Loaded:", process.env.S3_BUCKET_NAME, process.env.AWS_REGION);
 
 const app = express();
 
-// Load environment variables
 
 
 // Connect to database
@@ -40,6 +41,8 @@ app.use('/api/products', productRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/users', userManagementRoutes);
 app.use('/api/suppliers', supplierRoutes);
+app.use('/api/customers', customerRoutes);
+app.use('/api/bills', billRoutes);
 
 // Error handling middleware
 app.use((error, req, res, next) => {
