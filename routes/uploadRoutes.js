@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const { protect, allowRoles } = require('../middlewares/authMiddlewares');
-const admin = require('firebase-admin');
+const { bucket } = require('../config/firebaseAdmin');
 
 const router = express.Router();
 
@@ -29,9 +29,22 @@ router.post('/image', protect, allowRoles("superadmin", "stockmanager"), upload.
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    // Create a unique filename
+    console.log('Starting Firebase upload...');
+    console.log('Bucket name:', bucket.name);
+    console.log('File details:', {
+      originalName: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    });
+
+    // Create a unique filename (sanitize the original filename)
     const timestamp = Date.now();
-    const fileName = `products/${timestamp}_${req.file.originalname}`;
+    const randomString = Math.random().toString(36).substring(2, 15);
+    const sanitizedOriginalName = req.file.originalname.replace(/[^a-zA-Z0-9.]/g, '_');
+    const fileName = `products/${timestamp}_${randomString}_${sanitizedOriginalName}`;
+    
+    console.log('Generated file name:', fileName);
+
     const file = bucket.file(fileName);
 
     // Create a write stream to Firebase Storage
@@ -39,7 +52,6 @@ router.post('/image', protect, allowRoles("superadmin", "stockmanager"), upload.
       metadata: {
         contentType: req.file.mimetype,
       },
-      public: true, // Make the file publicly accessible
     });
 
     blobStream.on('error', (error) => {
@@ -52,22 +64,41 @@ router.post('/image', protect, allowRoles("superadmin", "stockmanager"), upload.
 
     blobStream.on('finish', async () => {
       try {
-        // Make the file public
+        console.log('File uploaded successfully');
+        
+        // Make the file publicly accessible
         await file.makePublic();
         
-        // Get the public URL
+        // Generate the correct public URL
         const publicUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+        
+        console.log('Upload successful, public URL:', publicUrl);
         
         res.status(200).json({
           message: 'Image uploaded successfully',
           imageUrl: publicUrl,
         });
       } catch (error) {
-        console.error('Error making file public:', error);
-        res.status(500).json({
-          message: 'Error finalizing upload',
-          error: error.message,
-        });
+        console.error('Error making file public or generating URL:', error);
+        
+        // If making public fails, try to get a signed URL as fallback
+        try {
+          const [signedUrl] = await file.getSignedUrl({
+            action: 'read',
+            expires: '03-09-2491', // Very far future date
+          });
+          
+          res.status(200).json({
+            message: 'Image uploaded successfully (with signed URL)',
+            imageUrl: signedUrl,
+          });
+        } catch (signedUrlError) {
+          console.error('Error generating signed URL:', signedUrlError);
+          res.status(500).json({
+            message: 'Upload successful but failed to generate public URL',
+            error: error.message,
+          });
+        }
       }
     });
 
@@ -93,19 +124,32 @@ router.delete('/image', protect, allowRoles("superadmin", "stockmanager"), async
       return res.status(400).json({ message: 'Image URL is required' });
     }
 
+    console.log('Deleting image:', imageUrl);
+
     // Extract the file path from the URL
-    const url = new URL(imageUrl);
-    const pathname = url.pathname;
+    let filePath;
     
-    // Remove the bucket name from the path
-    const bucketName = process.env.FIREBASE_STORAGE_BUCKET?.replace('gs://', '') || 'shree-sai-engineering';
-    let filePath = pathname;
-    
-    if (pathname.startsWith(`/${bucketName}/`)) {
-      filePath = pathname.substring(`/${bucketName}/`.length);
-    } else if (pathname.startsWith('/')) {
-      filePath = pathname.substring(1);
+    if (imageUrl.includes('storage.googleapis.com')) {
+      // For public URLs: https://storage.googleapis.com/bucket-name/path/to/file
+      const urlParts = imageUrl.split('/');
+      const bucketIndex = urlParts.findIndex(part => part === bucket.name);
+      if (bucketIndex !== -1 && bucketIndex < urlParts.length - 1) {
+        filePath = urlParts.slice(bucketIndex + 1).join('/');
+      }
+    } else if (imageUrl.includes('firebasestorage.googleapis.com')) {
+      // For Firebase Storage URLs, extract from the 'o=' parameter
+      const url = new URL(imageUrl);
+      const pathParam = url.searchParams.get('o');
+      if (pathParam) {
+        filePath = decodeURIComponent(pathParam);
+      }
     }
+
+    if (!filePath) {
+      return res.status(400).json({ message: 'Could not extract file path from URL' });
+    }
+
+    console.log('Extracted file path:', filePath);
 
     const file = bucket.file(filePath);
     
@@ -116,6 +160,7 @@ router.delete('/image', protect, allowRoles("superadmin", "stockmanager"), async
     }
 
     await file.delete();
+    console.log('Image deleted successfully');
     res.status(200).json({ message: 'Image deleted successfully' });
 
   } catch (error) {
