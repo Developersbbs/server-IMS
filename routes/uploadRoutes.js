@@ -1,19 +1,9 @@
-// routes/uploadRoutes.js
 const express = require('express');
-const AWS = require('aws-sdk');
 const multer = require('multer');
 const { protect, allowRoles } = require('../middlewares/authMiddlewares');
+const admin = require('firebase-admin');
 
 const router = express.Router();
-
-// Configure AWS SDK v2
-AWS.config.update({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION,
-});
-
-const s3 = new AWS.S3();
 
 // Configure multer for memory storage
 const upload = multer({
@@ -30,7 +20,7 @@ const upload = multer({
   },
 });
 
-// @desc    Upload image to S3
+// @desc    Upload image to Firebase Storage
 // @route   POST /api/upload/image
 // @access  Private (superadmin/stockmanager)
 router.post('/image', protect, allowRoles("superadmin", "stockmanager"), upload.single('image'), async (req, res) => {
@@ -39,28 +29,53 @@ router.post('/image', protect, allowRoles("superadmin", "stockmanager"), upload.
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const uniqueName = `products/${Date.now()}-${Math.round(Math.random() * 1E9)}-${req.file.originalname}`;
+    // Create a unique filename
+    const timestamp = Date.now();
+    const fileName = `products/${timestamp}_${req.file.originalname}`;
+    const file = bucket.file(fileName);
 
-    const uploadParams = {
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: uniqueName,
-      Body: req.file.buffer,
-      ContentType: req.file.mimetype,
-      // FIXED: The 'ACL' property is removed to support modern S3 buckets.
-      // Public access should be managed via a Bucket Policy in the AWS S3 console.
-    };
-
-    console.log('Starting S3 upload...');
-    const result = await s3.upload(uploadParams).promise();
-    console.log('S3 upload successful:', result.Location);
-
-    res.status(200).json({
-      message: 'Image uploaded successfully',
-      imageUrl: result.Location,
+    // Create a write stream to Firebase Storage
+    const blobStream = file.createWriteStream({
+      metadata: {
+        contentType: req.file.mimetype,
+      },
+      public: true, // Make the file publicly accessible
     });
 
+    blobStream.on('error', (error) => {
+      console.error('Firebase upload error:', error);
+      res.status(500).json({
+        message: 'Error uploading image to Firebase',
+        error: error.message,
+      });
+    });
+
+    blobStream.on('finish', async () => {
+      try {
+        // Make the file public
+        await file.makePublic();
+        
+        // Get the public URL
+        const publicUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+        
+        res.status(200).json({
+          message: 'Image uploaded successfully',
+          imageUrl: publicUrl,
+        });
+      } catch (error) {
+        console.error('Error making file public:', error);
+        res.status(500).json({
+          message: 'Error finalizing upload',
+          error: error.message,
+        });
+      }
+    });
+
+    // End the stream with the file buffer
+    blobStream.end(req.file.buffer);
+
   } catch (error) {
-    console.error('=== UPLOAD ERROR ===', error);
+    console.error('Upload error:', error);
     res.status(500).json({
       message: 'Error uploading image',
       error: error.message,
@@ -68,7 +83,7 @@ router.post('/image', protect, allowRoles("superadmin", "stockmanager"), upload.
   }
 });
 
-// @desc    Delete image from S3
+// @desc    Delete image from Firebase Storage
 // @route   DELETE /api/upload/image
 // @access  Private (superadmin/stockmanager)
 router.delete('/image', protect, allowRoles("superadmin", "stockmanager"), async (req, res) => {
@@ -78,23 +93,33 @@ router.delete('/image', protect, allowRoles("superadmin", "stockmanager"), async
       return res.status(400).json({ message: 'Image URL is required' });
     }
 
-    // Extract the key from the full S3 URL
-    const key = new URL(imageUrl).pathname.substring(1);
-    console.log('Extracted key for deletion:', key);
+    // Extract the file path from the URL
+    const url = new URL(imageUrl);
+    const pathname = url.pathname;
+    
+    // Remove the bucket name from the path
+    const bucketName = process.env.FIREBASE_STORAGE_BUCKET?.replace('gs://', '') || 'shree-sai-engineering';
+    let filePath = pathname;
+    
+    if (pathname.startsWith(`/${bucketName}/`)) {
+      filePath = pathname.substring(`/${bucketName}/`.length);
+    } else if (pathname.startsWith('/')) {
+      filePath = pathname.substring(1);
+    }
 
-    const deleteParams = {
-      Bucket: process.env.S3_BUCKET_NAME,
-      Key: key,
-    };
+    const file = bucket.file(filePath);
+    
+    // Check if file exists
+    const [exists] = await file.exists();
+    if (!exists) {
+      return res.status(404).json({ message: 'Image not found' });
+    }
 
-    // FIXED: Use the correct AWS SDK v2 syntax for deleting an object.
-    await s3.deleteObject(deleteParams).promise();
-    console.log('Image deleted successfully from S3');
-
+    await file.delete();
     res.status(200).json({ message: 'Image deleted successfully' });
 
   } catch (error) {
-    console.error('=== DELETE ERROR ===', error);
+    console.error('Delete error:', error);
     res.status(500).json({
       message: 'Error deleting image',
       error: error.message,
