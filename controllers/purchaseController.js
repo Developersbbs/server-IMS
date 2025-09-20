@@ -1,0 +1,394 @@
+// const Purchase = require('../models/Purchase');
+// const Product = require('../models/Product');
+// const asyncHandler = require('express-async-handler');
+
+// // @desc    Create a new purchase order
+// // @route   POST /api/purchases
+// // @access  Private
+// const createPurchase = asyncHandler(async (req, res) => {
+//   const { supplier, items, expectedDeliveryDate, notes } = req.body;
+
+//   // Validate items
+//   if (!items || items.length === 0) {
+//     res.status(400);
+//     throw new Error('Purchase order must have at least one item');
+//   }
+
+//   // Validate each item
+//   for (const item of items) {
+//     if (!item.product || !item.quantity || !item.unitCost) {
+//       res.status(400);
+//       throw new Error('Each item must have product, quantity, and unit cost');
+//     }
+    
+//     if (item.quantity <= 0 || item.unitCost < 0) {
+//       res.status(400);
+//       throw new Error('Quantity must be positive and unit cost cannot be negative');
+//     }
+//   }
+
+//   // Create purchase order
+//   const purchase = await Purchase.create({
+//     supplier,
+//     items,
+//     expectedDeliveryDate,
+//     notes,
+//     createdBy: req.user.id
+//   });
+
+//   // Populate the created purchase
+//   await purchase.populate([
+//     { path: 'supplier', select: 'name contactEmail' },
+//     { path: 'items.product', select: 'name sku' },
+//     { path: 'createdBy', select: 'name email' }
+//   ]);
+
+//   res.status(201).json(purchase);
+// });
+
+// // @desc    Get all purchase orders
+// // @route   GET /api/purchases
+// // @access  Private
+// const getPurchases = asyncHandler(async (req, res) => {
+//   const { 
+//     status, 
+//     supplier,
+//     page = 1, 
+//     limit = 10,
+//     sortBy = 'createdAt',
+//     sortOrder = 'desc',
+//     search
+//   } = req.query;
+  
+//   let query = {};
+  
+//   // Filter by status
+//   if (status) {
+//     query.status = status;
+//   }
+  
+//   // Filter by supplier
+//   if (supplier) {
+//     query.supplier = supplier;
+//   }
+  
+//   // Search by purchase order number or notes
+//   if (search) {
+//     query.$or = [
+//       { purchaseOrderNumber: { $regex: search, $options: 'i' } },
+//       { notes: { $regex: search, $options: 'i' } }
+//     ];
+//   }
+  
+//   const options = {
+//     page: parseInt(page),
+//     limit: parseInt(limit),
+//     populate: [
+//       { path: 'supplier', select: 'name contactEmail' },
+//       { path: 'items.product', select: 'name sku' },
+//       { path: 'createdBy', select: 'name email' },
+//       { path: 'approvedBy', select: 'name email' }
+//     ],
+//     sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 }
+//   };
+
+//   const purchases = await Purchase.paginate(query, options);
+//   res.json(purchases);
+// });
+
+// // @desc    Get single purchase order
+// // @route   GET /api/purchases/:id
+// // @access  Private
+// const getPurchase = asyncHandler(async (req, res) => {
+//   const purchase = await Purchase.findById(req.params.id)
+//     .populate('supplier')
+//     .populate('items.product')
+//     .populate('createdBy', 'name email')
+//     .populate('approvedBy', 'name email');
+
+//   if (!purchase) {
+//     res.status(404);
+//     throw new Error('Purchase order not found');
+//   }
+
+//   res.json(purchase);
+// });
+
+// // @desc    Update purchase order
+// // @route   PUT /api/purchases/:id
+// // @access  Private
+// const updatePurchase = asyncHandler(async (req, res) => {
+//   const purchase = await Purchase.findById(req.params.id);
+
+//   if (!purchase) {
+//     res.status(404);
+//     throw new Error('Purchase order not found');
+//   }
+
+//   // Check if purchase can be modified
+//   if (!purchase.canBeModified()) {
+//     res.status(400);
+//     throw new Error(`Cannot update purchase order with status: ${purchase.status}`);
+//   }
+
+//   // Only allow the creator or admin to update
+//   if (purchase.createdBy.toString() !== req.user.id && req.user.role !== 'admin') {
+//     res.status(403);
+//     throw new Error('Not authorized to update this purchase order');
+//   }
+
+//   const { supplier, items, expectedDeliveryDate, notes } = req.body;
+  
+//   // Validate items if provided
+//   if (items) {
+//     if (items.length === 0) {
+//       res.status(400);
+//       throw new Error('Purchase order must have at least one item');
+//     }
+
+//     for (const item of items) {
+//       if (!item.product || !item.quantity || item.unitCost === undefined) {
+//         res.status(400);
+//         throw new Error('Each item must have product, quantity, and unit cost');
+//       }
+      
+//       if (item.quantity <= 0 || item.unitCost < 0) {
+//         res.status(400);
+//         throw new Error('Quantity must be positive and unit cost cannot be negative');
+//       }
+//     }
+//   }
+  
+//   // Update fields
+//   if (supplier !== undefined) purchase.supplier = supplier;
+//   if (items !== undefined) purchase.items = items;
+//   if (expectedDeliveryDate !== undefined) purchase.expectedDeliveryDate = expectedDeliveryDate;
+//   if (notes !== undefined) purchase.notes = notes;
+
+//   const updatedPurchase = await purchase.save();
+  
+//   // Populate the updated purchase
+//   await updatedPurchase.populate([
+//     { path: 'supplier', select: 'name contactEmail' },
+//     { path: 'items.product', select: 'name sku' },
+//     { path: 'createdBy', select: 'name email' },
+//     { path: 'approvedBy', select: 'name email' }
+//   ]);
+
+//   res.json(updatedPurchase);
+// });
+
+// // @desc    Delete purchase order
+// // @route   DELETE /api/purchases/:id
+// // @access  Private/Admin
+// const deletePurchase = asyncHandler(async (req, res) => {
+//   const purchase = await Purchase.findById(req.params.id);
+
+//   if (!purchase) {
+//     res.status(404);
+//     throw new Error('Purchase order not found');
+//   }
+
+//   // Check if purchase can be deleted
+//   if (!purchase.canBeModified()) {
+//     res.status(400);
+//     throw new Error(`Cannot delete purchase order with status: ${purchase.status}`);
+//   }
+
+//   await Purchase.findByIdAndDelete(req.params.id);
+//   res.json({ message: 'Purchase order deleted successfully' });
+// });
+
+// // @desc    Approve purchase order
+// // @route   PUT /api/purchases/:id/approve
+// // @access  Private/Admin
+// const approvePurchase = asyncHandler(async (req, res) => {
+//   const purchase = await Purchase.findById(req.params.id);
+
+//   if (!purchase) {
+//     res.status(404);
+//     throw new Error('Purchase order not found');
+//   }
+
+//   if (!purchase.canBeApproved()) {
+//     res.status(400);
+//     throw new Error(`Cannot approve purchase order with status: ${purchase.status}`);
+//   }
+
+//   purchase.status = 'approved';
+//   purchase.approvedBy = req.user.id;
+//   purchase.approvalDate = new Date();
+
+//   const approvedPurchase = await purchase.save();
+  
+//   // Populate the approved purchase
+//   await approvedPurchase.populate([
+//     { path: 'supplier', select: 'name contactEmail' },
+//     { path: 'items.product', select: 'name sku' },
+//     { path: 'createdBy', select: 'name email' },
+//     { path: 'approvedBy', select: 'name email' }
+//   ]);
+
+//   res.json(approvedPurchase);
+// });
+
+// // @desc    Reject purchase order
+// // @route   PUT /api/purchases/:id/reject
+// // @access  Private/Admin
+// const rejectPurchase = asyncHandler(async (req, res) => {
+//   const { rejectionReason } = req.body;
+//   const purchase = await Purchase.findById(req.params.id);
+
+//   if (!purchase) {
+//     res.status(404);
+//     throw new Error('Purchase order not found');
+//   }
+
+//   if (!purchase.canBeApproved()) {
+//     res.status(400);
+//     throw new Error(`Cannot reject purchase order with status: ${purchase.status}`);
+//   }
+
+//   purchase.status = 'rejected';
+//   purchase.approvedBy = req.user.id;
+//   purchase.approvalDate = new Date();
+//   if (rejectionReason) {
+//     purchase.notes = purchase.notes ? 
+//       `${purchase.notes}\n\nRejection Reason: ${rejectionReason}` : 
+//       `Rejection Reason: ${rejectionReason}`;
+//   }
+
+//   const rejectedPurchase = await purchase.save();
+  
+//   // Populate the rejected purchase
+//   await rejectedPurchase.populate([
+//     { path: 'supplier', select: 'name contactEmail' },
+//     { path: 'items.product', select: 'name sku' },
+//     { path: 'createdBy', select: 'name email' },
+//     { path: 'approvedBy', select: 'name email' }
+//   ]);
+
+//   res.json(rejectedPurchase);
+// });
+
+// // @desc    Mark purchase as received
+// // @route   PUT /api/purchases/:id/receive
+// // @access  Private
+// const receivePurchase = asyncHandler(async (req, res) => {
+//   const { receivedItems } = req.body;
+  
+//   if (!receivedItems || !Array.isArray(receivedItems)) {
+//     res.status(400);
+//     throw new Error('receivedItems must be provided as an array');
+//   }
+
+//   const purchase = await Purchase.findById(req.params.id).populate('items.product');
+
+//   if (!purchase) {
+//     res.status(404);
+//     throw new Error('Purchase order not found');
+//   }
+
+//   if (!purchase.canReceiveItems()) {
+//     res.status(400);
+//     throw new Error(`Cannot receive items for purchase order with status: ${purchase.status}`);
+//   }
+
+//   // Update received quantities and inventory
+//   for (const receivedItem of receivedItems) {
+//     const { itemId, receivedQuantity } = receivedItem;
+    
+//     if (!itemId || receivedQuantity === undefined) {
+//       res.status(400);
+//       throw new Error('Each received item must have itemId and receivedQuantity');
+//     }
+
+//     const purchaseItem = purchase.items.id(itemId);
+    
+//     if (!purchaseItem) {
+//       res.status(400);
+//       throw new Error(`Item with ID ${itemId} not found in purchase order`);
+//     }
+
+//     if (receivedQuantity < 0) {
+//       res.status(400);
+//       throw new Error('Received quantity cannot be negative');
+//     }
+
+//     if (receivedQuantity > purchaseItem.quantity) {
+//       res.status(400);
+//       throw new Error(`Received quantity cannot exceed ordered quantity for item ${purchaseItem.product.name}`);
+//     }
+
+//     // Calculate the difference for inventory update
+//     const previousReceived = purchaseItem.receivedQuantity || 0;
+//     const difference = receivedQuantity - previousReceived;
+    
+//     // Update received quantity
+//     purchaseItem.receivedQuantity = receivedQuantity;
+    
+//     // Update inventory if there's a difference
+//     if (difference !== 0) {
+//       const product = await Product.findById(purchaseItem.product._id);
+//       if (product) {
+//         product.stockQuantity += difference;
+//         if (product.stockQuantity < 0) {
+//           product.stockQuantity = 0; // Prevent negative stock
+//         }
+//         await product.save();
+//       }
+//     }
+//   }
+  
+//   // Update purchase status and delivery date
+//   if (!purchase.actualDeliveryDate) {
+//     purchase.actualDeliveryDate = new Date();
+//   }
+  
+//   const updatedPurchase = await purchase.save();
+  
+//   // Populate the updated purchase
+//   await updatedPurchase.populate([
+//     { path: 'supplier', select: 'name contactEmail' },
+//     { path: 'items.product', select: 'name sku' },
+//     { path: 'createdBy', select: 'name email' },
+//     { path: 'approvedBy', select: 'name email' }
+//   ]);
+
+//   res.json(updatedPurchase);
+// });
+
+// // @desc    Get purchase order statistics
+// // @route   GET /api/purchases/stats
+// // @access  Private
+// const getPurchaseStats = asyncHandler(async (req, res) => {
+//   const stats = await Purchase.aggregate([
+//     {
+//       $group: {
+//         _id: '$status',
+//         count: { $sum: 1 },
+//         totalAmount: { $sum: '$totalAmount' }
+//       }
+//     }
+//   ]);
+
+//   const overduePurchases = await Purchase.findOverdue();
+  
+//   res.json({
+//     statusBreakdown: stats,
+//     overdueCount: overduePurchases.length,
+//     totalOverdueAmount: overduePurchases.reduce((sum, p) => sum + p.totalAmount, 0)
+//   });
+// });
+
+// module.exports = {
+//   createPurchase,
+//   getPurchases,
+//   getPurchase,
+//   updatePurchase,
+//   deletePurchase,
+//   approvePurchase,
+//   rejectPurchase,
+//   receivePurchase,
+//   getPurchaseStats
+// };
