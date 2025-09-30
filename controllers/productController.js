@@ -1,4 +1,5 @@
 const Product = require('../models/Product');
+const { handleStockNotifications } = require('../utils/stockNotifications');
 
 // @desc    Fetch all products with filtering and sorting
 // @route   GET /api/products
@@ -153,6 +154,7 @@ const createProduct = async (req, res) => {
     });
 
     const createdProduct = await product.save();
+    await handleStockNotifications(createdProduct, createdProduct.quantity);
     res.status(201).json(createdProduct);
   } catch (error) {
     if (error.name === 'ValidationError') {
@@ -219,6 +221,7 @@ const updateProduct = async (req, res) => {
     product.quantity = quantity !== undefined ? parseInt(quantity) : product.quantity;
 
     const updatedProduct = await product.save();
+    await handleStockNotifications(updatedProduct, updatedProduct.quantity);
     res.status(200).json(updatedProduct);
   } catch (error) {
     if (error.name === 'CastError') {
@@ -274,8 +277,10 @@ const updateProductQuantity = async (req, res) => {
       });
     }
 
+    // Check if stock level crosses threshold
     product.quantity = newQuantity;
     const updatedProduct = await product.save();
+    await handleStockNotifications(updatedProduct, newQuantity);
 
     res.status(200).json({
       message: 'Quantity updated successfully',

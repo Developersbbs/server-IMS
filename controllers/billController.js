@@ -2,6 +2,7 @@
 const Bill = require('../models/Bill');
 const Customer = require('../models/Customer');
 const Product = require('../models/Product');
+const { handleStockNotifications } = require('../utils/stockNotifications');
 
 exports.getAllBills = async (req, res) => {
   try {
@@ -52,7 +53,6 @@ exports.getBillById = async (req, res) => {
 };
 
 exports.createBill = async (req, res) => {
-  let session;
   try {
     const billData = { ...req.body }; // Create a copy to avoid modifying req.body directly
     billData.createdBy = req.user._id; // Assuming req.user is populated by auth middleware
@@ -86,31 +86,34 @@ exports.createBill = async (req, res) => {
     }
     // Validate individual item fields
     for (let i = 0; i < billData.items.length; i++) {
-        const item = billData.items[i];
-        if (!item.productId) {
-             return res.status(400).json({ message: `Item ${i + 1}: Product ID is required.` });
-        }
-        if (typeof item.quantity !== 'number' || item.quantity <= 0) {
-             return res.status(400).json({ message: `Item ${i + 1}: Quantity must be a number greater than 0.` });
-        }
-        if (typeof item.price !== 'number' || item.price < 0) {
-             return res.status(400).json({ message: `Item ${i + 1}: Price must be a non-negative number.` });
-        }
-        if (typeof item.total !== 'number' || item.total < 0) {
-             return res.status(400).json({ message: `Item ${i + 1}: Total must be a non-negative number.` });
-        }
-        // Optional: Fetch product to verify details (name, price consistency) if needed
-        // const product = await Product.findById(item.productId);
-        // if (!product) {
-        //    return res.status(400).json({ message: `Item ${i + 1}: Invalid Product ID.` });
-        // }
-        // billData.items[i].name = product.name; // Ensure name matches product
+      const item = billData.items[i];
+      if (!item.productId) {
+        return res.status(400).json({ message: `Item ${i + 1}: Product ID is required.` });
+      }
+      if (typeof item.quantity !== 'number' || item.quantity <= 0) {
+        return res.status(400).json({ message: `Item ${i + 1}: Quantity must be a number greater than 0.` });
+      }
+      if (typeof item.price !== 'number' || item.price < 0) {
+        return res.status(400).json({ message: `Item ${i + 1}: Price must be a non-negative number.` });
+      }
+      if (typeof item.total !== 'number' || item.total < 0) {
+        return res.status(400).json({ message: `Item ${i + 1}: Total must be a non-negative number.` });
+      }
+
+      const product = await Product.findById(item.productId);
+      if (!product) {
+        return res.status(400).json({ message: `Item ${i + 1}: Invalid Product ID.` });
+      }
+
+      if (product.quantity < item.quantity) {
+        return res.status(400).json({ message: `Item ${i + 1}: Insufficient stock for product '${product.name}'.` });
+      }
+
+      product.quantity -= item.quantity;
+      const updatedProduct = await product.save();
+      await handleStockNotifications(updatedProduct, updatedProduct.quantity);
     }
 
-    // --- Calculate Totals (Sanitize inputs) ---
-    billData.subtotal = parseFloat((billData.items.reduce((sum, item) => sum + (item.total || 0), 0)).toFixed(2));
-    billData.taxAmount = parseFloat((billData.taxAmount || 0).toFixed(2));
-    billData.discount = parseFloat((billData.discount || 0).toFixed(2));
     billData.totalAmount = parseFloat((billData.subtotal + billData.taxAmount - billData.discount).toFixed(2));
     billData.paidAmount = parseFloat((billData.paidAmount || 0).toFixed(2));
     billData.dueAmount = parseFloat((billData.totalAmount - billData.paidAmount).toFixed(2));

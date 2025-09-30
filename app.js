@@ -10,6 +10,7 @@ const userManagementRoutes = require('./routes/userManagementroutes');
 const supplierRoutes = require('./routes/supplierRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const billRoutes = require('./routes/billRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const cors = require("cors"); 
 const cookieParser = require('cookie-parser');
 
@@ -41,6 +42,7 @@ app.use('/api/users', userManagementRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/bills', billRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Add a test route to verify upload endpoint
 app.get('/api/test', (req, res) => {

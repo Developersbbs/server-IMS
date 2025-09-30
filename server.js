@@ -3,6 +3,7 @@
 // const connectDB = require('./config/db'); // ✅ use only this
 // const authRoutes = require('./routes/authRoutes');
 // const productRoutes = require('./routes/productRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 // const supplierRoutes = require('./routes/supplierRoutes');
 // const customerRoutes = require('./routes/customerRoutes');
 // const uploadRoutes = require('./routes/uploadRoutes');
@@ -36,6 +37,7 @@
 // // Routes
 // app.use('/api/auth', authRoutes);
 // app.use('/api/products', productRoutes);
+app.use('/api/notifications', notificationRoutes);
 // app.use('/api/suppliers', supplierRoutes);
 // app.use('/api/customers', customerRoutes);
 // app.use('/api/upload', uploadRoutes);
