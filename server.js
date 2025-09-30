@@ -3,6 +3,8 @@
 // const connectDB = require('./config/db'); // ✅ use only this
 // const authRoutes = require('./routes/authRoutes');
 // const productRoutes = require('./routes/productRoutes');
+// const supplierRoutes = require('./routes/supplierRoutes');
+// const customerRoutes = require('./routes/customerRoutes');
 // const uploadRoutes = require('./routes/uploadRoutes');
 // const cors = require("cors"); 
 // const cookieParser = require('cookie-parser');
@@ -21,7 +23,7 @@
 // // ✅ CORS config
 // const corsOptions = {
 //   origin: "http://localhost:5173",
-//   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+//   methods: ["GET", "POST", "PUT", "DELETE", "patch", "OPTIONS"],
 //   allowedHeaders: ["Content-Type", "Authorization"],
 //   credentials: true,
 // };
@@ -34,6 +36,8 @@
 // // Routes
 // app.use('/api/auth', authRoutes);
 // app.use('/api/products', productRoutes);
+// app.use('/api/suppliers', supplierRoutes);
+// app.use('/api/customers', customerRoutes);
 // app.use('/api/upload', uploadRoutes);
 
 // // Error handling middleware
