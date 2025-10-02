@@ -5,7 +5,7 @@ const notificationSchema = new mongoose.Schema({
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
   type: { type: String, enum: ['low-stock', 'out-of-stock'], required: true },
   isRead: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now }
+  readAt: { type: Date }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Notification', notificationSchema);

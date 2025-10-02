@@ -11,6 +11,7 @@ const supplierRoutes = require('./routes/supplierRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const billRoutes = require('./routes/billRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const { scheduleNotificationCleanup } = require('./utils/notificationCleanup');
 const cors = require("cors"); 
 const cookieParser = require('cookie-parser');
 
@@ -57,10 +58,10 @@ app.use((error, req, res, next) => {
     error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error' 
   });
 });
-
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`✅ Server is running @ http://localhost:${PORT}`);
   console.log(`📁 Upload endpoint: http://localhost:${PORT}/api/upload/image`);
+  scheduleNotificationCleanup();
 });

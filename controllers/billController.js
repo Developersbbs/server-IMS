@@ -1,8 +1,95 @@
 // controllers/billController.js
+const mongoose = require('mongoose');
 const Bill = require('../models/Bill');
 const Customer = require('../models/Customer');
 const Product = require('../models/Product');
 const { handleStockNotifications } = require('../utils/stockNotifications');
+
+const VALID_PAYMENT_METHODS = ['cash', 'card', 'upi', 'bank_transfer', 'credit'];
+const VALID_PAYMENT_STATUSES = ['pending', 'paid', 'partial'];
+
+const roundToTwo = (value) => Math.round((Number(value) || 0) * 100) / 100;
+const clamp = (value, min, max) => Math.min(Math.max(Number.isFinite(value) ? value : min, min), max);
+
+const normalizePaymentMethod = (method) => {
+  if (method === 'bank') {
+    return 'bank_transfer';
+  }
+  if (VALID_PAYMENT_METHODS.includes(method)) {
+    return method;
+  }
+  return 'cash';
+};
+
+const normalizePaymentStatus = (status) =>
+  VALID_PAYMENT_STATUSES.includes(status) ? status : 'pending';
+
+const calculateFinancials = ({ items, discountPercent, taxPercent, paidAmount, paymentStatus }) => {
+  const subtotal = roundToTwo(items.reduce((sum, item) => sum + roundToTwo(item.total || 0), 0));
+  const normalizedDiscountPercent = clamp(Number(discountPercent) || 0, 0, 100);
+  const discountAmount = roundToTwo((subtotal * normalizedDiscountPercent) / 100);
+  const taxableBase = roundToTwo(Math.max(subtotal - discountAmount, 0));
+  const normalizedTaxPercent = clamp(Number(taxPercent) || 0, 0, 100);
+  const taxAmount = roundToTwo((taxableBase * normalizedTaxPercent) / 100);
+  const totalAmount = roundToTwo(taxableBase + taxAmount);
+
+  let normalizedPaymentStatus = normalizePaymentStatus(paymentStatus);
+  let normalizedPaidAmount = roundToTwo(Number(paidAmount) || 0);
+
+  if (normalizedPaymentStatus === 'paid') {
+    normalizedPaidAmount = totalAmount;
+  }
+
+  if (normalizedPaidAmount > totalAmount) {
+    normalizedPaidAmount = totalAmount;
+  }
+
+  const dueAmount = roundToTwo(Math.max(totalAmount - normalizedPaidAmount, 0));
+  if (normalizedPaymentStatus === 'paid' && dueAmount > 0) {
+    normalizedPaymentStatus = 'partial';
+  }
+
+  return {
+    subtotal,
+    discountPercent: normalizedDiscountPercent,
+    discountAmount,
+    taxPercent: normalizedTaxPercent,
+    taxAmount,
+    totalAmount,
+    paidAmount: normalizedPaidAmount,
+    dueAmount,
+    paymentStatus: normalizedPaymentStatus
+  };
+};
+
+const parseOptionalDate = (value, fallback = null) => {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed;
+};
+
+const httpError = (status, message) => {
+  const error = new Error(message);
+  error.statusCode = status;
+  return error;
+};
+
+const notifyProducts = async (productIds) => {
+  if (!productIds || productIds.size === 0) {
+    return;
+  }
+
+  await Promise.all(
+    [...productIds].map(async (productId) => {
+      const product = await Product.findById(productId);
+      if (product) {
+        await handleStockNotifications(product, product.quantity);
+      }
+    })
+  );
+};
 
 exports.getAllBills = async (req, res) => {
   try {
@@ -54,98 +141,101 @@ exports.getBillById = async (req, res) => {
 
 exports.createBill = async (req, res) => {
   try {
-    const billData = { ...req.body }; // Create a copy to avoid modifying req.body directly
-    billData.createdBy = req.user._id; // Assuming req.user is populated by auth middleware
+    const payload = { ...req.body };
+    payload.createdBy = req.user._id;
 
-    // --- FIX 1: Fetch Customer Details ---
-    if (!billData.customerId) {
-       return res.status(400).json({ message: 'Customer ID is required.' });
+    if (!payload.customerId) {
+      throw httpError(400, 'Customer ID is required.');
     }
-    const customer = await Customer.findById(billData.customerId);
+
+    const customer = await Customer.findById(payload.customerId);
     if (!customer) {
-       return res.status(400).json({ message: 'Invalid Customer ID provided.' });
-    }
-    billData.customerName = customer.name;
-    billData.customerEmail = customer.email;
-    billData.customerPhone = customer.phone || ''; // Handle potential missing phone
-
-    // --- FIX 2: Align Payment Method ---
-    // Convert frontend 'bank' value to schema 'bank_transfer'
-    if (billData.paymentMethod === 'bank') {
-        billData.paymentMethod = 'bank_transfer';
-    }
-    // Validate paymentMethod against schema enum
-    const validPaymentMethods = ['cash', 'card', 'upi', 'bank_transfer', 'credit'];
-    if (!validPaymentMethods.includes(billData.paymentMethod)) {
-         return res.status(400).json({ message: `Invalid payment method '${billData.paymentMethod}' provided.` });
+      throw httpError(400, 'Invalid customer ID.');
     }
 
-    // --- Validate Items ---
-    if (!billData.items || !Array.isArray(billData.items) || billData.items.length === 0) {
-        return res.status(400).json({ message: 'Bill must contain at least one item.' });
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
+      throw httpError(400, 'Bill must contain at least one item.');
     }
-    // Validate individual item fields
-    for (let i = 0; i < billData.items.length; i++) {
-      const item = billData.items[i];
-      if (!item.productId) {
-        return res.status(400).json({ message: `Item ${i + 1}: Product ID is required.` });
+
+    const items = [];
+    const updatedProducts = new Map();
+
+    for (let index = 0; index < payload.items.length; index += 1) {
+      const item = payload.items[index];
+      if (!item?.productId) {
+        throw httpError(400, `Item ${index + 1}: Product ID is required.`);
       }
-      if (typeof item.quantity !== 'number' || item.quantity <= 0) {
-        return res.status(400).json({ message: `Item ${i + 1}: Quantity must be a number greater than 0.` });
+
+      const quantity = Number(item.quantity) || 0;
+      if (quantity <= 0) {
+        throw httpError(400, `Item ${index + 1}: Quantity must be greater than 0.`);
       }
-      if (typeof item.price !== 'number' || item.price < 0) {
-        return res.status(400).json({ message: `Item ${i + 1}: Price must be a non-negative number.` });
+
+      const price = roundToTwo(Number(item.price) || 0);
+      if (price < 0) {
+        throw httpError(400, `Item ${index + 1}: Price cannot be negative.`);
       }
-      if (typeof item.total !== 'number' || item.total < 0) {
-        return res.status(400).json({ message: `Item ${i + 1}: Total must be a non-negative number.` });
-      }
+
+      const total = roundToTwo(price * quantity);
 
       const product = await Product.findById(item.productId);
       if (!product) {
-        return res.status(400).json({ message: `Item ${i + 1}: Invalid Product ID.` });
+        throw httpError(400, `Item ${index + 1}: Invalid product selected.`);
       }
 
-      if (product.quantity < item.quantity) {
-        return res.status(400).json({ message: `Item ${i + 1}: Insufficient stock for product '${product.name}'.` });
+      if (product.quantity < quantity) {
+        throw httpError(400, `Item ${index + 1}: Only ${product.quantity} units available for '${product.name}'.`);
       }
 
-      product.quantity -= item.quantity;
-      const updatedProduct = await product.save();
-      await handleStockNotifications(updatedProduct, updatedProduct.quantity);
+      product.quantity -= quantity;
+      await product.save({ validateModifiedOnly: true });
+      updatedProducts.set(String(product._id), product);
+
+      items.push({
+        productId: product._id,
+        name: item.name || product.name,
+        quantity,
+        price,
+        total
+      });
     }
 
-    billData.totalAmount = parseFloat((billData.subtotal + billData.taxAmount - billData.discount).toFixed(2));
-    billData.paidAmount = parseFloat((billData.paidAmount || 0).toFixed(2));
-    billData.dueAmount = parseFloat((billData.totalAmount - billData.paidAmount).toFixed(2));
+    const financials = calculateFinancials({
+      items,
+      discountPercent: payload.discountPercent,
+      taxPercent: payload.taxPercent,
+      paidAmount: payload.paidAmount,
+      paymentStatus: payload.paymentStatus
+    });
 
-    // Basic validation of calculated amounts
-    if (billData.subtotal < 0) {
-        return res.status(400).json({ message: 'Subtotal cannot be negative.' });
-    }
-    if (billData.totalAmount < 0) {
-        return res.status(400).json({ message: 'Total amount cannot be negative.' });
-    }
-    if (billData.dueAmount < 0) {
-         return res.status(400).json({ message: 'Due amount cannot be negative.' });
-    }
+    const bill = new Bill({
+      customerId: customer._id,
+      customerName: customer.name,
+      customerEmail: customer.email,
+      customerPhone: customer.phone || '',
+      items,
+      ...financials,
+      taxAmount: financials.taxAmount,
+      discount: financials.discountAmount,
+      paymentMethod: normalizePaymentMethod(payload.paymentMethod),
+      paymentStatus: financials.paymentStatus,
+      billDate: parseOptionalDate(payload.billDate, new Date()),
+      dueDate: parseOptionalDate(payload.dueDate, null),
+      notes: payload.notes || '',
+      createdBy: payload.createdBy
+    });
 
-    // --- Create the Bill ---
-    // Mongoose will trigger the pre('validate') hook to generate billNumber
-    const bill = new Bill(billData);
     await bill.save();
 
-    // --- Update customer outstanding balance if applicable ---
-    // Example logic: If payment is pending or partial, or method is credit, update balance.
-    // Adjust this logic based on your specific business rules.
-    if (bill.paymentMethod === 'credit' || (bill.paymentStatus === 'pending' && bill.dueAmount > 0) || bill.paymentStatus === 'partial') {
+    if (bill.paymentMethod === 'credit' || bill.paymentStatus !== 'paid') {
       await Customer.findByIdAndUpdate(
         bill.customerId,
         { $inc: { outstandingBalance: bill.dueAmount } },
-        { new: true, runValidators: true } // Options for findByIdAndUpdate
+        { new: true, runValidators: true }
       );
     }
 
-    // Populate customerId for the response if needed by frontend
+    await notifyProducts(new Set([...updatedProducts.keys()]));
     await bill.populate('customerId', 'name email phone');
 
     res.status(201).json({
@@ -177,31 +267,139 @@ exports.createBill = async (req, res) => {
 
 exports.updateBill = async (req, res) => {
   try {
-    // Consider similar validation and data fetching as in createBill if needed for updates
-    // Be careful with updates that might affect financial calculations or customer balances.
-    const bill = await Bill.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
-    
-    if (!bill) {
+    const existingBill = await Bill.findById(req.params.id);
+    if (!existingBill) {
       return res.status(404).json({ message: 'Bill not found' });
     }
-    
-    res.status(200).json({ 
-      message: 'Bill updated successfully', 
-      bill 
+
+    const payload = { ...req.body };
+
+    const customer = await Customer.findById(existingBill.customerId);
+    if (!customer) {
+      throw httpError(400, 'Associated customer no longer exists.');
+    }
+
+    const originalItems = existingBill.items.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity
+    }));
+
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
+      throw httpError(400, 'Bill must contain at least one item.');
+    }
+
+    const adjustmentMap = new Map();
+
+    const applyAdjustment = (productId, delta) => {
+      const key = String(productId);
+      adjustmentMap.set(key, (adjustmentMap.get(key) || 0) + delta);
+    };
+
+    originalItems.forEach(({ productId, quantity }) => applyAdjustment(productId, quantity));
+
+    const items = [];
+
+    for (let index = 0; index < payload.items.length; index += 1) {
+      const item = payload.items[index];
+      if (!item?.productId) {
+        throw httpError(400, `Item ${index + 1}: Product ID is required.`);
+      }
+
+      const quantity = Number(item.quantity) || 0;
+      if (quantity <= 0) {
+        throw httpError(400, `Item ${index + 1}: Quantity must be greater than 0.`);
+      }
+
+      const price = roundToTwo(Number(item.price) || 0);
+      if (price < 0) {
+        throw httpError(400, `Item ${index + 1}: Price cannot be negative.`);
+      }
+
+      const total = roundToTwo(price * quantity);
+      applyAdjustment(item.productId, -quantity);
+
+      items.push({
+        productId: item.productId,
+        name: item.name,
+        quantity,
+        price,
+        total
+      });
+    }
+
+    const updatedProducts = new Map();
+    for (const [productId, delta] of adjustmentMap.entries()) {
+      if (delta === 0) {
+        continue;
+      }
+      const product = await Product.findById(productId);
+      if (!product) {
+        throw httpError(400, 'One or more referenced products no longer exist.');
+      }
+      const newQuantity = product.quantity + delta;
+      if (newQuantity < 0) {
+        throw httpError(400, `Insufficient stock for product '${product.name}'. Available: ${product.quantity}`);
+      }
+      product.quantity = newQuantity;
+      await product.save({ validateModifiedOnly: true });
+      updatedProducts.set(productId, product);
+    }
+
+    const financials = calculateFinancials({
+      items,
+      discountPercent: payload.discountPercent ?? existingBill.discountPercent,
+      taxPercent: payload.taxPercent ?? existingBill.taxPercent,
+      paidAmount: payload.paidAmount ?? existingBill.paidAmount,
+      paymentStatus: payload.paymentStatus ?? existingBill.paymentStatus
+    });
+
+    const outstandingDelta = roundToTwo(existingBill.dueAmount * -1);
+    const newOutstanding = financials.dueAmount;
+
+    const updatedBill = await Bill.findByIdAndUpdate(
+      existingBill._id,
+      {
+        items,
+        subtotal: financials.subtotal,
+        taxPercent: financials.taxPercent,
+        taxAmount: financials.taxAmount,
+        discountPercent: financials.discountPercent,
+        discount: financials.discountAmount,
+        totalAmount: financials.totalAmount,
+        paidAmount: financials.paidAmount,
+        dueAmount: financials.dueAmount,
+        paymentStatus: financials.paymentStatus,
+        paymentMethod: normalizePaymentMethod(payload.paymentMethod ?? existingBill.paymentMethod),
+        billDate: parseOptionalDate(payload.billDate, existingBill.billDate),
+        dueDate: parseOptionalDate(payload.dueDate, existingBill.dueDate),
+        notes: payload.notes ?? existingBill.notes
+      },
+      { new: true, runValidators: true }
+    ).populate('customerId', 'name email phone');
+
+    await Customer.findByIdAndUpdate(
+      customer._id,
+      { $inc: { outstandingBalance: outstandingDelta + newOutstanding } },
+      { new: true, runValidators: true }
+    );
+
+    await notifyProducts(new Set([...updatedProducts.keys()]));
+
+    res.status(200).json({
+      message: 'Bill updated successfully',
+      bill: updatedBill
     });
   } catch (err) {
-    console.error("Error in updateBill:", err); // Log for debugging
-    // Add specific error handling like in createBill if necessary
+    console.error("Error in updateBill:", err);
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({ message: err.message });
+    }
     if (err.name === 'ValidationError') {
-        const messages = Object.values(err.errors).map(e => e.message);
-        return res.status(400).json({ message: 'Validation Error', errors: messages }); // Use 'errors' array
+      const messages = Object.values(err.errors).map((e) => e.message);
+      return res.status(400).json({ message: 'Validation Error', errors: messages });
     }
     if (err.name === 'CastError') {
-         return res.status(400).json({ message: 'Invalid data format', error: err.message });
+      return res.status(400).json({ message: 'Invalid data format', error: err.message });
     }
     res.status(500).json({ message: 'Server error', error: err.message });
   }
