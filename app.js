@@ -23,7 +23,7 @@ require('./config/firebaseAdmin');
 
 // CORS config
 const corsOptions = {
-  origin: "https://bejewelled-florentine-dae7a2.netlify.app/login",
+  origin: "https://bejewelled-florentine-dae7a2.netlify.app",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
