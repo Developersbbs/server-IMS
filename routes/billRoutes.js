@@ -29,8 +29,8 @@ router.get('/:id/invoice', allowRoles('superadmin', 'billcounter','stockmanager'
 // POST /api/bills - Create new bill
 router.post('/', allowRoles('superadmin', 'billcounter','stockmanager'), createBill);
 
-// PUT /api/bills/:id - Update bill
-router.put('/:id', allowRoles('superadmin', 'billcounter','stockmanager'), updateBill);
+// PUT /api/bills/:id - Update bill (superadmin only)
+router.put('/:id', allowRoles('superadmin'), updateBill);
 
 // DELETE /api/bills/:id - Delete bill
 router.delete('/:id', allowRoles('superadmin',), deleteBill);

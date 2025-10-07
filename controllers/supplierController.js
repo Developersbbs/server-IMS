@@ -173,6 +173,7 @@ exports.getSupplierProducts = async (req, res) => {
     const { id } = req.params;
 
     const products = await Product.find({ supplier: id })
+      .populate('category', 'name')
       .select('_id name category price quantity batchNumber expiryDate')
       .sort({ name: 1 });
 
