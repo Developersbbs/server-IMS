@@ -7,7 +7,8 @@ const {
   createSupplier,
   updateSupplier,
   deleteSupplier,
-  getSuppliersStats
+  getSuppliersStats,
+  getSupplierProducts
 } = require('../controllers/supplierController');
 const { protect, allowRoles } = require('../middlewares/authMiddlewares');
 
@@ -16,6 +17,9 @@ router.use(protect);
 
 // GET /api/suppliers/stats - Get supplier statistics
 router.get('/stats', getSuppliersStats);
+
+// GET /api/suppliers/:id/products - Get products for a supplier
+router.get('/:id/products', allowRoles('superadmin', 'stockmanager'), getSupplierProducts);
 
 // GET /api/suppliers - Get all suppliers
 router.get('/', allowRoles('superadmin', 'stockmanager'), getAllSuppliers);

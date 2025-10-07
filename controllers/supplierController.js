@@ -1,5 +1,6 @@
 // controllers/supplierController.js
 const Supplier = require('../models/Supplier');
+const Product = require('../models/Product');
 
 // Get all suppliers
 exports.getAllSuppliers = async (req, res) => {
@@ -162,6 +163,21 @@ exports.getSuppliersStats = async (req, res) => {
 
     res.status(200).json(result);
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// Get products for a supplier
+exports.getSupplierProducts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const products = await Product.find({ supplier: id })
+      .select('_id name category price quantity batchNumber expiryDate')
+      .sort({ name: 1 });
+
+    res.status(200).json({ products });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 };

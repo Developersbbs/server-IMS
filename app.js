@@ -11,6 +11,7 @@ const supplierRoutes = require('./routes/supplierRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const billRoutes = require('./routes/billRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const categoryRoutes = require('./routes/categoryRoutes');
 const { scheduleNotificationCleanup } = require('./utils/notificationCleanup');
 const cors = require("cors"); 
 const cookieParser = require('cookie-parser');
@@ -23,7 +24,7 @@ require('./config/firebaseAdmin');
 
 // CORS config
 const corsOptions = {
-  origin: "https://bejewelled-florentine-dae7a2.netlify.app",
+  origin: "http://localhost:5173",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -39,6 +40,7 @@ app.use(cookieParser());
 app.use('/api/auth', authRoutes);
 app.use('/api/upload', uploadRoutes); // This should come before other routes
 app.use('/api/products', productRoutes);
+app.use('/api/categories', categoryRoutes);
 app.use('/api/users', userManagementRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/customers', customerRoutes);

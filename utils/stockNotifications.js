@@ -1,6 +1,14 @@
 const Notification = require('../models/Notification');
 
-const LOW_STOCK_THRESHOLD = 10;
+const DEFAULT_REORDER_LEVEL = 10;
+
+function getReorderLevel(product) {
+  const value = Number(product?.reorderLevel);
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_REORDER_LEVEL;
+  }
+  return value;
+}
 
 async function upsertNotification(filter, update) {
   return Notification.findOneAndUpdate(
@@ -36,6 +44,8 @@ async function handleStockNotifications(product, newQuantity) {
     return;
   }
 
+  const reorderLevel = getReorderLevel(product);
+
   if (newQuantity === 0) {
     await upsertNotification(
       { productId, type: 'out-of-stock', isRead: false },
@@ -49,11 +59,11 @@ async function handleStockNotifications(product, newQuantity) {
     return;
   }
 
-  if (newQuantity < LOW_STOCK_THRESHOLD) {
+  if (newQuantity <= reorderLevel) {
     await upsertNotification(
       { productId, type: 'low-stock', isRead: false },
       {
-        message: `${product.name} is low in stock (${newQuantity} remaining)`,
+        message: `${product.name} has reached its reorder level (${newQuantity} remaining, threshold ${reorderLevel})`,
         productId,
         type: 'low-stock'
       }

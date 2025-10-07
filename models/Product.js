@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema({
+  productId: {
+    type: String,
+    unique: true,
+    trim: true
+  },
   name: {
     type: String,
     required: true,
@@ -19,15 +24,37 @@ const productSchema = new mongoose.Schema({
     min: 0
   },
   category: {
-    type: String,
-    required: true,
-    trim: true
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    required: true
   },
   quantity: {
     type: Number,
     required: true,
     default: 0,
     min: 0
+  },
+  supplier: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Supplier',
+    required: true
+  },
+  batchNumber: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  addedDate: {
+    type: Date,
+    default: Date.now
+  },
+  expiryDate: {
+    type: Date
+  },
+  reorderLevel: {
+    type: Number,
+    default: 10,
+    min: 1
   }
 }, { timestamps: true });
 

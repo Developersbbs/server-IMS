@@ -1,4 +1,6 @@
+const mongoose = require('mongoose');
 const Product = require('../models/Product');
+const Category = require('../models/Category');
 const { handleStockNotifications } = require('../utils/stockNotifications');
 
 // @desc    Fetch all products with filtering and sorting
@@ -30,6 +32,9 @@ const getProducts = async (req, res) => {
 
     // Category filter
     if (category && category !== 'all') {
+      if (!mongoose.Types.ObjectId.isValid(category)) {
+        return res.status(400).json({ message: 'Invalid category filter.' });
+      }
       query.category = category;
     }
 
@@ -56,8 +61,10 @@ const getProducts = async (req, res) => {
     // Calculate pagination
     const skip = (page - 1) * limit;
 
-    // Execute query
+    // Execute query with supplier population
     const products = await Product.find(query)
+      .populate('supplier', 'name contactPerson phone email')
+      .populate('category', 'name status')
       .sort(sortObj)
       .skip(skip)
       .limit(parseInt(limit));
@@ -65,8 +72,15 @@ const getProducts = async (req, res) => {
     // Get total count for pagination
     const total = await Product.countDocuments(query);
 
+    const formattedProducts = products.map((product) => {
+      const obj = product.toObject();
+      obj.category = obj.category ? { _id: obj.category._id, name: obj.category.name, status: obj.category.status } : null;
+      obj.categoryId = obj.category?._id || null;
+      return obj;
+    });
+
     res.status(200).json({
-      products,
+      products: formattedProducts,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -87,10 +101,17 @@ const getProducts = async (req, res) => {
 // @access  Public
 const getProductById = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
+    const product = await Product.findById(req.params.id)
+      .populate('supplier', 'name contactPerson phone email')
+      .populate('category', 'name status');
 
     if (product) {
-      res.status(200).json(product);
+      const formattedProduct = product.toObject();
+      formattedProduct.category = formattedProduct.category
+        ? { _id: formattedProduct.category._id, name: formattedProduct.category.name, status: formattedProduct.category.status }
+        : null;
+      formattedProduct.categoryId = formattedProduct.category?._id || null;
+      res.status(200).json(formattedProduct);
     } else {
       res.status(404).json({ message: 'Product not found' });
     }
@@ -110,32 +131,58 @@ const getProductById = async (req, res) => {
 // @route   POST /api/products
 // @access  Private/Admin
 const createProduct = async (req, res) => {
-  const { name, description, image, price, category, quantity } = req.body;
+  // Extract all fields from request body
+  const { 
+    name, 
+    description, 
+    image, 
+    price, 
+    category, 
+    quantity, 
+    supplier, 
+    expiryDate, 
+    reorderLevel,
+    productId,  // Get productId from request body
+    batchNumber // Get batchNumber from request body
+  } = req.body;
 
-  // Enhanced validation
-  if (!name || !price || !category) {
+  // Required fields validation
+  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'expiryDate'];
+  const missingFields = requiredFields.filter(field => !req.body[field] && req.body[field] !== 0);
+
+  if (missingFields.length > 0) {
     return res.status(400).json({ 
-      message: 'Please provide all required fields: name, price, and category.' 
+      message: `Missing required fields: ${missingFields.join(', ')}`,
+      fields: missingFields
     });
   }
 
-  if (price < 0) {
+  // Data type and format validation
+  if (isNaN(price) || price < 0) {
     return res.status(400).json({ 
-      message: 'Price cannot be negative.' 
+      message: 'Price must be a non-negative number.' 
     });
   }
 
-  if (quantity !== undefined && quantity < 0) {
+  if (quantity !== undefined && (isNaN(quantity) || quantity < 0)) {
     return res.status(400).json({ 
-      message: 'Quantity cannot be negative.' 
+      message: 'Quantity must be a non-negative number.' 
+    });
+  }
+
+  // Validate expiry date is in the future
+  if (new Date(expiryDate) <= new Date()) {
+    return res.status(400).json({
+      message: 'Expiry date must be in the future.'
     });
   }
 
   try {
-    // Check for duplicate product name in same category
-    const existingProduct = await Product.findOne({ 
-      name: { $regex: new RegExp(`^${name}$`, 'i') }, 
-      category: { $regex: new RegExp(`^${category}$`, 'i') } 
+    // Check if product with same name and category already exists
+    const existingProduct = await Product.findOne({
+      name: { $regex: new RegExp(`^${name}$`, 'i') },
+      category,
+      _id: { $ne: req.params?.id }
     });
 
     if (existingProduct) {
@@ -143,15 +190,43 @@ const createProduct = async (req, res) => {
         message: 'A product with this name already exists in this category.' 
       });
     }
+    
+    // Create product data object with all fields
+    if (!mongoose.Types.ObjectId.isValid(category)) {
+      return res.status(400).json({ message: 'Invalid category.' });
+    }
 
-    const product = new Product({
+    const categoryDoc = await Category.findById(category);
+    if (!categoryDoc || categoryDoc.status !== 'active') {
+      return res.status(400).json({
+        message: 'Selected category is invalid or inactive.'
+      });
+    }
+
+    const productData = {
       name: name.trim(),
       description: description ? description.trim() : '',
-      image,
       price: parseFloat(price),
-      category: category.trim(),
+      category: categoryDoc._id,
       quantity: quantity !== undefined ? parseInt(quantity) : 0,
-    });
+      supplier: supplier,
+      batchNumber: batchNumber ? batchNumber.trim() : '',
+      expiryDate: new Date(expiryDate),
+      reorderLevel: reorderLevel ? parseInt(reorderLevel) : 10,
+      addedDate: new Date()
+    };
+
+    // Only add productId if it's provided and not empty
+    if (productId && productId.trim()) {
+      productData.productId = productId.trim();
+    }
+
+    // Only add image if it exists
+    if (image) {
+      productData.image = image;
+    }
+
+    const product = new Product(productData);
 
     const createdProduct = await product.save();
     await handleStockNotifications(createdProduct, createdProduct.quantity);
@@ -175,7 +250,18 @@ const createProduct = async (req, res) => {
 // @route   PUT /api/products/:id
 // @access  Private/Admin
 const updateProduct = async (req, res) => {
-  const { name, description, image, price, category, quantity } = req.body;
+  const { 
+    name, 
+    description, 
+    image, 
+    price, 
+    category, 
+    quantity, 
+    supplier, 
+    batchNumber, 
+    expiryDate, 
+    reorderLevel 
+  } = req.body;
 
   try {
     const product = await Product.findById(req.params.id);
@@ -185,15 +271,22 @@ const updateProduct = async (req, res) => {
     }
 
     // Validate updated values
-    if (price !== undefined && price < 0) {
+    if (price !== undefined && (isNaN(price) || price < 0)) {
       return res.status(400).json({ 
-        message: 'Price cannot be negative.' 
+        message: 'Price must be a non-negative number.' 
       });
     }
 
-    if (quantity !== undefined && quantity < 0) {
+    if (quantity !== undefined && (isNaN(quantity) || quantity < 0)) {
       return res.status(400).json({ 
-        message: 'Quantity cannot be negative.' 
+        message: 'Quantity must be a non-negative number.' 
+      });
+    }
+
+    // Validate expiry date if provided
+    if (expiryDate && new Date(expiryDate) <= new Date()) {
+      return res.status(400).json({
+        message: 'Expiry date must be in the future.'
       });
     }
 
@@ -212,21 +305,56 @@ const updateProduct = async (req, res) => {
       }
     }
 
-    // Update fields
-    product.name = name ? name.trim() : product.name;
+    // Update product fields
+    product.name = name !== undefined ? name.trim() : product.name;
     product.description = description !== undefined ? description.trim() : product.description;
     product.image = image !== undefined ? image : product.image;
     product.price = price !== undefined ? parseFloat(price) : product.price;
-    product.category = category ? category.trim() : product.category;
-    product.quantity = quantity !== undefined ? parseInt(quantity) : product.quantity;
-
+    if (category !== undefined) {
+      if (!mongoose.Types.ObjectId.isValid(category)) {
+        return res.status(400).json({ message: 'Invalid category.' });
+      }
+      const categoryDoc = await Category.findById(category);
+      if (!categoryDoc || categoryDoc.status !== 'active') {
+        return res.status(400).json({ message: 'Selected category is invalid or inactive.' });
+      }
+      product.category = categoryDoc._id;
+    }
+    
+    // Update supplier if provided
+    if (supplier !== undefined) {
+      product.supplier = supplier;
+    }
+    
+    // Update batch number if provided
+    if (batchNumber !== undefined) {
+      product.batchNumber = batchNumber.trim();
+    }
+    
+    // Update expiry date if provided
+    if (expiryDate !== undefined) {
+      product.expiryDate = new Date(expiryDate);
+    }
+    
+    // Update reorder level if provided
+    if (reorderLevel !== undefined) {
+      product.reorderLevel = parseInt(reorderLevel) || 10;
+    }
+    
+    // Only update quantity if it's provided and different
+    if (quantity !== undefined) {
+      const oldQuantity = product.quantity;
+      product.quantity = parseInt(quantity);
+      
+      // If quantity changed, check stock notifications
+      if (oldQuantity !== product.quantity) {
+        await handleStockNotifications(product, product.quantity);
+      }
+    }
+    
     const updatedProduct = await product.save();
-    await handleStockNotifications(updatedProduct, updatedProduct.quantity);
     res.status(200).json(updatedProduct);
   } catch (error) {
-    if (error.name === 'CastError') {
-      return res.status(404).json({ message: 'Product not found' });
-    }
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({ 
@@ -329,12 +457,50 @@ const deleteProduct = async (req, res) => {
 // @access  Public
 const getCategories = async (req, res) => {
   try {
-    const categories = await Product.distinct('category');
-    res.status(200).json(categories.sort());
+    const categories = await Product.aggregate([
+      {
+        $lookup: {
+          from: 'categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: 'categoryInfo'
+        }
+      },
+      {
+        $unwind: {
+          path: '$categoryInfo',
+          preserveNullAndEmptyArrays: false
+        }
+      },
+      {
+        $match: {
+          'categoryInfo.status': 'active'
+        }
+      },
+      {
+        $group: {
+          _id: '$categoryInfo._id',
+          name: { $first: '$categoryInfo.name' },
+          status: { $first: '$categoryInfo.status' }
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          status: 1
+        }
+      },
+      {
+        $sort: { name: 1 }
+      }
+    ]);
+
+    res.status(200).json(categories);
   } catch (error) {
-    res.status(500).json({ 
-      message: 'Server Error: Could not fetch categories.', 
-      error: error.message 
+    res.status(500).json({
+      message: 'Server Error: Could not fetch categories.',
+      error: error.message
     });
   }
 };
