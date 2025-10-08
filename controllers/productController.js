@@ -178,19 +178,6 @@ const createProduct = async (req, res) => {
   }
 
   try {
-    // Check if product with same name and category already exists
-    const existingProduct = await Product.findOne({
-      name: { $regex: new RegExp(`^${name}$`, 'i') },
-      category,
-      _id: { $ne: req.params?.id }
-    });
-
-    if (existingProduct) {
-      return res.status(400).json({ 
-        message: 'A product with this name already exists in this category.' 
-      });
-    }
-    
     // Create product data object with all fields
     if (!mongoose.Types.ObjectId.isValid(category)) {
       return res.status(400).json({ message: 'Invalid category.' });
@@ -288,21 +275,6 @@ const updateProduct = async (req, res) => {
       return res.status(400).json({
         message: 'Expiry date must be in the future.'
       });
-    }
-
-    // Check for duplicate product name (excluding current product)
-    if (name && name !== product.name) {
-      const existingProduct = await Product.findOne({ 
-        name: { $regex: new RegExp(`^${name}$`, 'i') }, 
-        category: category || product.category,
-        _id: { $ne: req.params.id }
-      });
-
-      if (existingProduct) {
-        return res.status(400).json({ 
-          message: 'A product with this name already exists in this category.' 
-        });
-      }
     }
 
     // Update product fields
