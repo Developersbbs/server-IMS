@@ -217,7 +217,13 @@ const createProduct = async (req, res) => {
 
     const createdProduct = await product.save();
     await handleStockNotifications(createdProduct, createdProduct.quantity);
-    res.status(201).json(createdProduct);
+
+    // Populate the category field before returning
+    const populatedProduct = await Product.findById(createdProduct._id)
+      .populate('supplier', 'name contactPerson phone email')
+      .populate('category', 'name status');
+
+    res.status(201).json(populatedProduct);
   } catch (error) {
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
@@ -325,7 +331,13 @@ const updateProduct = async (req, res) => {
     }
     
     const updatedProduct = await product.save();
-    res.status(200).json(updatedProduct);
+
+    // Populate the category field before returning
+    const populatedProduct = await Product.findById(updatedProduct._id)
+      .populate('supplier', 'name contactPerson phone email')
+      .populate('category', 'name status');
+
+    res.status(200).json(populatedProduct);
   } catch (error) {
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
