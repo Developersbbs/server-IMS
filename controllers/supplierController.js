@@ -174,10 +174,18 @@ exports.getSupplierProducts = async (req, res) => {
 
     const products = await Product.find({ supplier: id })
       .populate('category', 'name')
-      .select('_id name category price quantity batchNumber expiryDate')
+      .select('_id name category price quantity batchNumber manufacturingDate expiryDate')
       .sort({ name: 1 });
 
-    res.status(200).json({ products });
+    const mappedProducts = products.map(product => {
+      const obj = product.toObject();
+      if (!obj.manufacturingDate && obj.expiryDate) {
+        obj.manufacturingDate = obj.expiryDate;
+      }
+      return obj;
+    });
+
+    res.status(200).json({ products: mappedProducts });
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }

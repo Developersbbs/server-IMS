@@ -48,8 +48,9 @@ const productSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-  expiryDate: {
-    type: Date
+  manufacturingDate: {
+    type: Date,
+    required: true
   },
   reorderLevel: {
     type: Number,

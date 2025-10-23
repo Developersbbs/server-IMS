@@ -140,14 +140,14 @@ const createProduct = async (req, res) => {
     category, 
     quantity, 
     supplier, 
-    expiryDate, 
+    manufacturingDate, 
     reorderLevel,
     productId,  // Get productId from request body
     batchNumber // Get batchNumber from request body
   } = req.body;
 
   // Required fields validation
-  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'expiryDate'];
+  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'manufacturingDate'];
   const missingFields = requiredFields.filter(field => !req.body[field] && req.body[field] !== 0);
 
   if (missingFields.length > 0) {
@@ -170,10 +170,10 @@ const createProduct = async (req, res) => {
     });
   }
 
-  // Validate expiry date is in the future
-  if (new Date(expiryDate) <= new Date()) {
+  // Validate manufacturing date is not in the future
+  if (new Date(manufacturingDate) > new Date()) {
     return res.status(400).json({
-      message: 'Expiry date must be in the future.'
+      message: 'Manufacturing date cannot be in the future.'
     });
   }
 
@@ -198,7 +198,7 @@ const createProduct = async (req, res) => {
       quantity: quantity !== undefined ? parseInt(quantity) : 0,
       supplier: supplier,
       batchNumber: batchNumber ? batchNumber.trim() : '',
-      expiryDate: new Date(expiryDate),
+      manufacturingDate: new Date(manufacturingDate),
       reorderLevel: reorderLevel ? parseInt(reorderLevel) : 10,
       addedDate: new Date()
     };
@@ -252,7 +252,7 @@ const updateProduct = async (req, res) => {
     quantity, 
     supplier, 
     batchNumber, 
-    expiryDate, 
+    manufacturingDate, 
     reorderLevel 
   } = req.body;
 
@@ -276,10 +276,10 @@ const updateProduct = async (req, res) => {
       });
     }
 
-    // Validate expiry date if provided
-    if (expiryDate && new Date(expiryDate) <= new Date()) {
+    // Validate manufacturing date if provided
+    if (manufacturingDate && new Date(manufacturingDate) > new Date()) {
       return res.status(400).json({
-        message: 'Expiry date must be in the future.'
+        message: 'Manufacturing date cannot be in the future.'
       });
     }
 
@@ -309,9 +309,9 @@ const updateProduct = async (req, res) => {
       product.batchNumber = batchNumber.trim();
     }
     
-    // Update expiry date if provided
-    if (expiryDate !== undefined) {
-      product.expiryDate = new Date(expiryDate);
+    // Update manufacturing date if provided
+    if (manufacturingDate !== undefined) {
+      product.manufacturingDate = new Date(manufacturingDate);
     }
     
     // Update reorder level if provided
