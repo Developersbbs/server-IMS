@@ -197,7 +197,7 @@ inwardSchema.methods.canBeModified = function() {
 
 // Instance method to check if inward can be approved
 inwardSchema.methods.canBeApproved = function() {
-  return this.status === 'pending';
+  return this.status === 'pending' || this.status === 'draft';
 };
 
 // Static method to get inwards by status

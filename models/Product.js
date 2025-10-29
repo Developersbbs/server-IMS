@@ -4,6 +4,7 @@ const productSchema = new mongoose.Schema({
   productId: {
     type: String,
     unique: true,
+    sparse: true, // Allow multiple null values
     trim: true
   },
   unit: {
@@ -15,7 +16,7 @@ const productSchema = new mongoose.Schema({
   hsnNumber: {
     type: String,
     trim: true,
-    required: true
+    required: false
   },
   name: {
     type: String,

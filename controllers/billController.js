@@ -482,3 +482,474 @@ exports.generateInvoice = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 };
+
+exports.getSellingReport = async (req, res) => {
+  try {
+    const { startDate, endDate, productId, categoryId, sortBy = 'revenue', sortOrder = 'desc' } = req.query;
+
+    // Build match conditions for bills
+    let matchConditions = {};
+
+    // Date range filter
+    if (startDate && endDate) {
+      matchConditions.billDate = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Product filter
+    if (productId && productId !== 'all') {
+      if (!mongoose.Types.ObjectId.isValid(productId)) {
+        return res.status(400).json({ message: 'Invalid product ID' });
+      }
+      matchConditions['items.productId'] = productId;
+    }
+
+    // Category filter - we'll need to join with products
+    let categoryFilter = {};
+    if (categoryId && categoryId !== 'all') {
+      if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+        return res.status(400).json({ message: 'Invalid category ID' });
+      }
+      categoryFilter.category = categoryId;
+    }
+
+    // Aggregation pipeline to get selling data
+    const pipeline = [
+      // Match bills by date range
+      { $match: matchConditions },
+
+      // Unwind items array to get individual product sales
+      { $unwind: '$items' },
+
+      // Lookup product details
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'items.productId',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+
+      // Unwind product array
+      { $unwind: '$product' },
+
+      // Apply category filter if specified
+      ...(Object.keys(categoryFilter).length > 0 ? [{ $match: { 'product': categoryFilter } }] : []),
+
+      // Group by product to calculate totals
+      {
+        $group: {
+          _id: '$items.productId',
+          productName: { $first: '$items.name' },
+          category: { $first: '$product.category' },
+          totalQuantity: { $sum: '$items.quantity' },
+          totalRevenue: { $sum: '$items.total' },
+          averagePrice: { $avg: '$items.price' },
+          billsCount: { $addToSet: '$_id' },
+          minPrice: { $min: '$items.price' },
+          maxPrice: { $max: '$items.price' }
+        }
+      },
+
+      // Count bills for each product
+      {
+        $addFields: {
+          billsCount: { $size: '$billsCount' }
+        }
+      },
+
+      // Lookup category details
+      {
+        $lookup: {
+          from: 'categories',
+          localField: 'category',
+          foreignField: '_id',
+          as: 'categoryInfo'
+        }
+      },
+
+      // Format the output
+      {
+        $project: {
+          _id: 1,
+          productName: 1,
+          category: { $arrayElemAt: ['$categoryInfo.name', 0] },
+          totalQuantity: 1,
+          totalRevenue: { $round: ['$totalRevenue', 2] },
+          averagePrice: { $round: ['$averagePrice', 2] },
+          billsCount: 1,
+          minPrice: { $round: ['$minPrice', 2] },
+          maxPrice: { $round: ['$maxPrice', 2] }
+        }
+      }
+    ];
+
+    // Add sorting
+    const sortObj = {};
+    sortObj[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    pipeline.push({ $sort: sortObj });
+
+    // Execute aggregation
+    const sellingData = await Bill.aggregate(pipeline);
+
+    // Get summary statistics
+    const summaryStats = await Bill.aggregate([
+      { $match: matchConditions },
+      {
+        $group: {
+          _id: null,
+          totalBills: { $addToSet: '$_id' },
+          totalRevenue: { $sum: '$totalAmount' },
+          totalItems: { $sum: { $size: '$items' } }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          totalBills: { $size: '$totalBills' },
+          totalRevenue: { $round: ['$totalRevenue', 2] },
+          totalItems: 1
+        }
+      }
+    ]);
+
+    const stats = summaryStats[0] || { totalBills: 0, totalRevenue: 0, totalItems: 0 };
+
+    res.status(200).json({
+      products: sellingData,
+      summary: stats,
+      filters: {
+        startDate,
+        endDate,
+        productId,
+        categoryId
+      }
+    });
+
+  } catch (err) {
+    console.error("Error in getSellingReport:", err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+exports.getProductSellingDetails = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { startDate, endDate, limit = 50 } = req.query;
+
+    if (!productId || !mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ message: 'Valid product ID is required' });
+    }
+
+    // Build match conditions
+    let matchConditions = {
+      'items.productId': productId
+    };
+
+    // Date range filter
+    if (startDate && endDate) {
+      matchConditions.billDate = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Get product details
+    const product = await Product.findById(productId).populate('category', 'name');
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+
+    // Get sales data with bill details
+    const salesPipeline = [
+      { $match: matchConditions },
+      { $unwind: '$items' },
+      { $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } },
+      {
+        $lookup: {
+          from: 'customers',
+          localField: 'customerId',
+          foreignField: '_id',
+          as: 'customer'
+        }
+      },
+      { $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          _id: 1,
+          billNumber: 1,
+          billDate: 1,
+          customerName: { $ifNull: ['$customer.name', '$customerName'] },
+          quantity: '$items.quantity',
+          price: '$items.price',
+          total: '$items.total',
+          paymentStatus: 1,
+          paymentMethod: 1
+        }
+      },
+      { $sort: { billDate: -1 } },
+      { $limit: parseInt(limit) }
+    ];
+
+    const salesHistory = await Bill.aggregate(salesPipeline);
+
+    // Calculate metrics
+    const metrics = await Bill.aggregate([
+      { $match: matchConditions },
+      { $unwind: '$items' },
+      { $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } },
+      {
+        $group: {
+          _id: null,
+          totalQuantity: { $sum: '$items.quantity' },
+          totalRevenue: { $sum: '$items.total' },
+          averagePrice: { $avg: '$items.price' },
+          billsCount: { $addToSet: '$_id' },
+          minPrice: { $min: '$items.price' },
+          maxPrice: { $max: '$items.price' },
+          firstSaleDate: { $min: '$billDate' },
+          lastSaleDate: { $max: '$billDate' }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          totalQuantity: 1,
+          totalRevenue: { $round: ['$totalRevenue', 2] },
+          averagePrice: { $round: ['$averagePrice', 2] },
+          billsCount: { $size: '$billsCount' },
+          minPrice: { $round: ['$minPrice', 2] },
+          maxPrice: { $round: ['$maxPrice', 2] },
+          firstSaleDate: 1,
+          lastSaleDate: 1
+        }
+      }
+    ]);
+
+    // Get daily sales trend (last 30 days)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const trendPipeline = [
+      {
+        $match: {
+          'items.productId': new mongoose.Types.ObjectId(productId),
+          billDate: { $gte: thirtyDaysAgo }
+        }
+      },
+      { $unwind: '$items' },
+      { $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$billDate' }
+          },
+          quantity: { $sum: '$items.quantity' },
+          revenue: { $sum: '$items.total' },
+          billsCount: { $addToSet: '$_id' }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          date: '$_id',
+          quantity: 1,
+          revenue: { $round: ['$revenue', 2] },
+          billsCount: { $size: '$billsCount' }
+        }
+      },
+      { $sort: { date: 1 } }
+    ];
+
+    const salesTrend = await Bill.aggregate(trendPipeline);
+
+    const result = {
+      product: {
+        _id: product._id,
+        name: product.name,
+        category: product.category?.name || 'Uncategorized',
+        currentStock: product.quantity,
+        unit: product.unit,
+        basePrice: product.price
+      },
+      metrics: metrics[0] || {
+        totalQuantity: 0,
+        totalRevenue: 0,
+        averagePrice: 0,
+        billsCount: 0,
+        minPrice: 0,
+        maxPrice: 0
+      },
+      salesHistory,
+      salesTrend
+    };
+
+    res.status(200).json(result);
+
+  } catch (err) {
+    console.error("Error in getProductSellingDetails:", err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+// @desc    Get monthly selling report for products
+// @route   GET /api/bills/monthly-selling-report
+// @access  Private/Admin
+exports.getMonthlySellingReport = async (req, res) => {
+  try {
+    const { startDate, endDate, productId, limit = 12 } = req.query;
+
+    // Build match conditions
+    let matchConditions = {};
+
+    // Date range filter
+    if (startDate && endDate) {
+      matchConditions.billDate = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate)
+      };
+    }
+
+    // Product filter
+    if (productId && productId !== 'all') {
+      if (!mongoose.Types.ObjectId.isValid(productId)) {
+        return res.status(400).json({ message: 'Invalid product ID' });
+      }
+      matchConditions['items.productId'] = productId;
+    }
+
+    // Aggregation pipeline for monthly data
+    const monthlyPipeline = [
+      { $match: matchConditions },
+      { $unwind: '$items' },
+
+      // Apply product filter if specified
+      ...(productId && productId !== 'all' ? [{ $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } }] : []),
+
+      // Group by month and product
+      {
+        $group: {
+          _id: {
+            year: { $year: '$billDate' },
+            month: { $month: '$billDate' },
+            productId: '$items.productId'
+          },
+          productName: { $first: '$items.name' },
+          totalQuantity: { $sum: '$items.quantity' },
+          totalRevenue: { $sum: '$items.total' },
+          billsCount: { $addToSet: '$_id' },
+          averagePrice: { $avg: '$items.price' }
+        }
+      },
+
+      // Count bills
+      {
+        $addFields: {
+          billsCount: { $size: '$billsCount' }
+        }
+      },
+
+      // Lookup product details
+      {
+        $lookup: {
+          from: 'products',
+          localField: '_id.productId',
+          foreignField: '_id',
+          as: 'product'
+        }
+      },
+      { $unwind: '$product' },
+
+      // Lookup category
+      {
+        $lookup: {
+          from: 'categories',
+          localField: 'product.category',
+          foreignField: '_id',
+          as: 'category'
+        }
+      },
+
+      // Format the output
+      {
+        $project: {
+          _id: 0,
+          year: '$_id.year',
+          month: '$_id.month',
+          monthName: {
+            $arrayElemAt: [
+              ['', 'January', 'February', 'March', 'April', 'May', 'June',
+               'July', 'August', 'September', 'October', 'November', 'December'],
+              '$_id.month'
+            ]
+          },
+          productId: '$_id.productId',
+          productName: 1,
+          category: { $arrayElemAt: ['$category.name', 0] },
+          totalQuantity: 1,
+          totalRevenue: { $round: ['$totalRevenue', 2] },
+          billsCount: 1,
+          averagePrice: { $round: ['$averagePrice', 2] }
+        }
+      },
+
+      // Sort by year and month descending
+      { $sort: { year: -1, month: -1 } },
+
+      // Limit results
+      { $limit: parseInt(limit) }
+    ];
+
+    const monthlyData = await Bill.aggregate(monthlyPipeline);
+
+    // Get summary statistics
+    const summaryPipeline = [
+      { $match: matchConditions },
+      { $unwind: '$items' },
+      ...(productId && productId !== 'all' ? [{ $match: { 'items.productId': new mongoose.Types.ObjectId(productId) } }] : []),
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$items.total' },
+          totalQuantity: { $sum: '$items.quantity' },
+          totalBills: { $addToSet: '$_id' },
+          monthsCount: {
+            $addToSet: {
+              year: { $year: '$billDate' },
+              month: { $month: '$billDate' }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          _id: 0,
+          totalRevenue: { $round: ['$totalRevenue', 2] },
+          totalQuantity: 1,
+          totalBills: { $size: '$totalBills' },
+          monthsCount: { $size: '$monthsCount' }
+        }
+      }
+    ];
+
+    const summaryData = await Bill.aggregate(summaryPipeline);
+    const summary = summaryData[0] || { totalRevenue: 0, totalQuantity: 0, totalBills: 0, monthsCount: 0 };
+
+    res.status(200).json({
+      monthlyData,
+      summary,
+      filters: {
+        startDate,
+        endDate,
+        productId
+      }
+    });
+
+  } catch (err) {
+    console.error("Error in getMonthlySellingReport:", err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};

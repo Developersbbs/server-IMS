@@ -212,20 +212,6 @@ const createProduct = async (req, res) => {
       productData.productId = productId.trim();
     }
 
-    // Only add image if it exists
-    if (image) {
-      productData.image = image;
-    }
-
-    const product = new Product(productData);
-
-    const createdProduct = await product.save();
-    await handleStockNotifications(createdProduct, createdProduct.quantity);
-
-    // Populate the category field before returning
-    const populatedProduct = await Product.findById(createdProduct._id)
-      .populate('supplier', 'name contactPerson phone email')
-      .populate('category', 'name status');
 
     res.status(201).json(populatedProduct);
   } catch (error) {
@@ -563,6 +549,37 @@ const bulkUpdateProducts = async (req, res) => {
   }
 };
 
+// @desc    Get product report with all products
+// @route   GET /api/products/report
+// @access  Private/Admin
+const getProductReport = async (req, res) => {
+  try {
+    const products = await Product.find({})
+      .populate('supplier', 'name')
+      .populate('category', 'name status')
+      .sort({ name: 1 });
+
+    const formattedProducts = products.map(product => {
+      const obj = product.toObject();
+      obj.category = obj.category ? obj.category.name : 'Uncategorized';
+      obj.supplier = obj.supplier ? obj.supplier.name : 'Unknown';
+      obj.stockStatus = product.quantity === 0 ? 'Out of Stock' :
+                       product.quantity <= 10 ? 'Low Stock' : 'In Stock';
+      return obj;
+    });
+
+    res.status(200).json({
+      products: formattedProducts,
+      total: formattedProducts.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: 'Server Error: Could not fetch product report.',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getProducts,
   getProductById,
@@ -573,4 +590,5 @@ module.exports = {
   getCategories,
   getLowStockProducts,
   bulkUpdateProducts,
+  getProductReport,
 };

@@ -1,6 +1,8 @@
 const Inward = require('../models/Inward');
 const Product = require('../models/Product');
+const Category = require('../models/Category');
 const asyncHandler = require('express-async-handler');
+const { handleStockNotifications } = require('../utils/stockNotifications');
 
 // @desc    Create a new inward (GRN)
 // @route   POST /api/inwards
@@ -513,24 +515,105 @@ const deleteInward = asyncHandler(async (req, res) => {
   res.json({ message: 'Inward deleted successfully' });
 });
 
+// Helper function to create new product from inward item
+async function createNewProductFromInwardItem(item, inward) {
+  console.log('🔄 Creating new product from inward item...');
+
+  try {
+    // Find a default category (first active category)
+    const defaultCategory = await Category.findOne({ status: 'active' }).select('_id');
+    console.log('Default category found:', !!defaultCategory);
+
+    if (!defaultCategory) {
+      console.log('❌ No active category found');
+      throw new Error('No active category found. Please create a category first.');
+    }
+
+    const productData = {
+      name: item.productName || item.product,
+      description: item.notes || `Product from inward ${inward.grnNumber}`,
+      price: item.unitCost,
+      category: defaultCategory._id,
+      quantity: item.receivedQuantity,
+      supplier: inward.supplier,
+      batchNumber: item.batchNumber,
+      manufacturingDate: new Date(item.manufacturingDate),
+      reorderLevel: 10,
+      addedDate: new Date()
+    };
+
+    // Validate required fields
+    if (!productData.name || productData.name.trim() === '') {
+      throw new Error('Product name is required');
+    }
+    if (!productData.batchNumber || productData.batchNumber.trim() === '') {
+      throw new Error('Batch number is required');
+    }
+    if (!productData.manufacturingDate || isNaN(productData.manufacturingDate.getTime())) {
+      throw new Error('Valid manufacturing date is required');
+    }
+
+    if (item.expiryDate) {
+      productData.expiryDate = new Date(item.expiryDate);
+      if (isNaN(productData.expiryDate.getTime())) {
+        throw new Error('Invalid expiry date');
+      }
+    }
+
+    console.log('Creating product with data:', productData);
+    const newProduct = new Product(productData);
+    const savedProduct = await newProduct.save();
+    console.log('✅ Product created successfully:', savedProduct._id);
+
+    // Handle stock notifications for new product
+    await handleStockNotifications(savedProduct, savedProduct.quantity);
+
+    // Update the inward item to reference the new product
+    item.product = savedProduct._id;
+
+    return savedProduct;
+  } catch (error) {
+    console.error(`❌ Error creating product for ${item.productName}:`, error);
+    throw error; // Re-throw to be handled by caller
+  }
+}
+
 // @desc    Approve inward
 // @route   PUT /api/inwards/:id/approve
 // @access  Private/Admin
 const approveInward = asyncHandler(async (req, res) => {
+  console.log('=== APPROVE INWARD START ===');
+  console.log('User ID:', req.user?.id);
+  console.log('Inward ID:', req.params.id);
+
   // Check if user is authenticated
   if (!req.user || !req.user.id) {
+    console.log('❌ User not authenticated');
     res.status(401);
     throw new Error('User not authenticated');
   }
 
-  const inward = await Inward.findById(req.params.id);
+  let inward;
+  try {
+    inward = await Inward.findById(req.params.id);
+    console.log('Inward found:', !!inward);
+  } catch (error) {
+    console.error('❌ Error finding inward:', error);
+    res.status(500);
+    throw new Error('Database error while finding inward');
+  }
 
   if (!inward) {
+    console.log('❌ Inward not found');
     res.status(404);
     throw new Error('Inward not found');
   }
 
+  console.log('Inward status:', inward.status);
+  console.log('Can be approved:', inward.canBeApproved());
+
   if (!inward.canBeApproved()) {
+    console.log('❌ Cannot approve inward with status:', inward.status);
     res.status(400);
     throw new Error(`Cannot approve inward with status: ${inward.status}`);
   }
@@ -539,26 +622,49 @@ const approveInward = asyncHandler(async (req, res) => {
   inward.approvedBy = req.user.id;
   inward.approvalDate = new Date();
 
-  // Update inventory for approved inwards (only for existing products)
-  for (const item of inward.items) {
-    // Only update inventory if it's an existing product (ObjectId)
-    if (typeof item.product === 'string' && item.product.match(/^[0-9a-fA-F]{24}$/)) {
-      const product = await Product.findById(item.product);
-      if (product) {
-        product.quantity += item.receivedQuantity;
-        product.batchNumber = item.batchNumber;
-        product.manufacturingDate = item.manufacturingDate;
-        if (item.expiryDate) {
-          product.expiryDate = item.expiryDate;
+  // Update inventory for approved inwards - handle both existing and new products
+  console.log('🔄 Processing items for inventory update...');
+  for (let i = 0; i < inward.items.length; i++) {
+    const item = inward.items[i];
+    console.log(`Processing item ${i + 1}/${inward.items.length}:`, item.productName || item.product);
+    console.log('Item type check:', typeof item.product, item.product);
+
+    try {
+      if (typeof item.product === 'string' && item.product.match(/^[0-9a-fA-F]{24}$/)) {
+        console.log('✅ Existing product - updating quantity');
+        // Existing product - update quantity
+        const product = await Product.findById(item.product);
+        if (product) {
+          const oldQuantity = product.quantity;
+          product.quantity += item.receivedQuantity;
+          product.batchNumber = item.batchNumber;
+          product.manufacturingDate = item.manufacturingDate;
+          if (item.expiryDate) {
+            product.expiryDate = item.expiryDate;
+          }
+          await product.save();
+          console.log(`✅ Product ${product.name} updated: ${oldQuantity} → ${product.quantity}`);
+        } else {
+          console.error(`❌ Product with ID ${item.product} not found in database`);
+          throw new Error(`Product with ID ${item.product} not found`);
         }
-        await product.save();
+      } else {
+        console.log('🆕 New product - creating it');
+        // New product - create it
+        await createNewProductFromInwardItem(item, inward);
       }
+    } catch (error) {
+      console.error(`❌ Error processing item ${item.productName || item.product}:`, error);
+      throw new Error(`Failed to process inventory item: ${item.productName || item.product}`);
     }
   }
 
+  console.log('💾 Saving approved inward...');
   const approvedInward = await inward.save();
+  console.log('✅ Inward approved and saved successfully');
 
   // Populate the approved inward
+  console.log('🔄 Populating approved inward...');
   await approvedInward.populate([
     { path: 'supplier', select: 'name email phone' },
     { path: 'items.product', select: 'name sku' },
@@ -566,6 +672,7 @@ const approveInward = asyncHandler(async (req, res) => {
     { path: 'createdBy', select: 'name email' },
     { path: 'approvedBy', select: 'name email' }
   ]);
+  console.log('✅ Inward populated successfully');
 
   // Handle population for mixed product types
   const approvedInwardObj = approvedInward.toObject ? approvedInward.toObject() : approvedInward;
@@ -574,6 +681,7 @@ const approveInward = asyncHandler(async (req, res) => {
     product: (typeof item.product === 'string' && item.product.match(/^[0-9a-fA-F]{24}$/)) ? item.product : null
   }));
 
+  console.log('=== APPROVE INWARD SUCCESS ===');
   res.json(approvedInwardObj);
 });
 
