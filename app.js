@@ -12,6 +12,8 @@ const customerRoutes = require('./routes/customerRoutes');
 const billRoutes = require('./routes/billRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
+const purchaseRoutes = require('./routes/purchaseRoutes');
+const inwardRoutes = require('./routes/inwardRoutes');
 const { scheduleNotificationCleanup } = require('./utils/notificationCleanup');
 const cors = require("cors"); 
 const cookieParser = require('cookie-parser');
@@ -24,7 +26,8 @@ require('./config/firebaseAdmin');
 
 // CORS config
 const corsOptions = {
-  origin: "https://bejewelled-florentine-dae7a2.netlify.app",
+  // origin: "https://bejewelled-florentine-dae7a2.netlify.app",
+  origin:"http://localhost:5173",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
@@ -46,6 +49,8 @@ app.use('/api/suppliers', supplierRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/bills', billRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/purchases', purchaseRoutes);
+app.use('/api/inwards', inwardRoutes);
 
 // Add a test route to verify upload endpoint
 app.get('/api/test', (req, res) => {
@@ -62,8 +67,39 @@ app.use((error, req, res, next) => {
 });
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`✅ Server is running @ http://localhost:${PORT}`);
-  console.log(`📁 Upload endpoint: http://localhost:${PORT}/api/upload/image`);
-  scheduleNotificationCleanup();
-});
+// Function to find an available port
+const findAvailablePort = (startPort) => {
+  return new Promise((resolve) => {
+    const server = require('net').createServer();
+
+    server.listen(startPort, () => {
+      server.close();
+      resolve(startPort);
+    });
+
+    server.on('error', () => {
+      resolve(findAvailablePort(startPort + 1));
+    });
+  });
+};
+
+// Start server with automatic port detection
+const startServer = async () => {
+  try {
+    const availablePort = await findAvailablePort(PORT);
+    if (availablePort !== PORT) {
+      console.log(`⚠️  Port ${PORT} is in use, using port ${availablePort} instead`);
+    }
+
+    app.listen(availablePort, () => {
+      console.log(`✅ Server is running @ http://localhost:${availablePort}`);
+      console.log(`📁 Upload endpoint: http://localhost:${availablePort}/api/upload/image`);
+      scheduleNotificationCleanup();
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();

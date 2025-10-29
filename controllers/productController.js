@@ -142,12 +142,14 @@ const createProduct = async (req, res) => {
     supplier, 
     manufacturingDate, 
     reorderLevel,
-    productId,  // Get productId from request body
-    batchNumber // Get batchNumber from request body
+    productId,
+    batchNumber,
+    unit,
+    hsnNumber
   } = req.body;
 
   // Required fields validation
-  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'manufacturingDate'];
+  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'manufacturingDate', 'unit', 'hsnNumber'];
   const missingFields = requiredFields.filter(field => !req.body[field] && req.body[field] !== 0);
 
   if (missingFields.length > 0) {
@@ -198,6 +200,8 @@ const createProduct = async (req, res) => {
       quantity: quantity !== undefined ? parseInt(quantity) : 0,
       supplier: supplier,
       batchNumber: batchNumber ? batchNumber.trim() : '',
+      unit: unit || 'none',
+      hsnNumber: hsnNumber ? hsnNumber.trim() : '',
       manufacturingDate: new Date(manufacturingDate),
       reorderLevel: reorderLevel ? parseInt(reorderLevel) : 10,
       addedDate: new Date()
@@ -253,7 +257,9 @@ const updateProduct = async (req, res) => {
     supplier, 
     batchNumber, 
     manufacturingDate, 
-    reorderLevel 
+    reorderLevel,
+    unit,
+    hsnNumber
   } = req.body;
 
   try {
@@ -288,6 +294,8 @@ const updateProduct = async (req, res) => {
     product.description = description !== undefined ? description.trim() : product.description;
     product.image = image !== undefined ? image : product.image;
     product.price = price !== undefined ? parseFloat(price) : product.price;
+    product.unit = unit !== undefined ? unit : product.unit;
+    product.hsnNumber = hsnNumber !== undefined ? hsnNumber.trim() : product.hsnNumber;
     if (category !== undefined) {
       if (!mongoose.Types.ObjectId.isValid(category)) {
         return res.status(400).json({ message: 'Invalid category.' });

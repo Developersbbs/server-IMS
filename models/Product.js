@@ -6,6 +6,17 @@ const productSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
+  unit: {
+    type: String,
+    enum: ['liter', 'kilogram', 'none'],
+    default: 'none',
+    required: true
+  },
+  hsnNumber: {
+    type: String,
+    trim: true,
+    required: true
+  },
   name: {
     type: String,
     required: true,
@@ -51,6 +62,9 @@ const productSchema = new mongoose.Schema({
   manufacturingDate: {
     type: Date,
     required: true
+  },
+  expiryDate: {
+    type: Date
   },
   reorderLevel: {
     type: Number,

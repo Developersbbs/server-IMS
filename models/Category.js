@@ -34,9 +34,6 @@ const categorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-categorySchema.index({ name: 1 }, { unique: true });
-categorySchema.index({ slug: 1 }, { unique: true });
-
 categorySchema.pre('save', function(next) {
   if (this.isModified('name')) {
     this.slug = this.name
