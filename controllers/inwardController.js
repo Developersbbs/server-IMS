@@ -681,9 +681,18 @@ const addInwardToInventory = asyncHandler(async (req, res) => {
   }
 
   if (inward.status !== 'approved') {
-    console.log('❌ Cannot add to inventory - Inward is not approved');
-    res.status(400);
-    throw new Error('Only approved inwards can be added to inventory');
+    if (req.user.role === 'stockmanager') {
+      console.log('ℹ️ Inward is not approved, auto-approving for stock manager...');
+      inward.status = 'approved';
+      inward.approvedBy = req.user.id;
+      inward.approvalDate = new Date();
+      await inward.save();
+      console.log('✅ Inward auto-approved by stock manager');
+    } else {
+      console.log('❌ Cannot add to inventory - Inward is not approved');
+      res.status(400);
+      throw new Error('Only approved inwards can be added to inventory');
+    }
   }
 
   if (inward.inventoryAdded) {
