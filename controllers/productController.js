@@ -137,9 +137,7 @@ const createProduct = async (req, res) => {
     description, 
     image, 
     price, 
-    category, 
     quantity, 
-    supplier, 
     manufacturingDate, 
     reorderLevel,
     productId,
@@ -148,8 +146,12 @@ const createProduct = async (req, res) => {
     hsnNumber
   } = req.body;
 
-  // Required fields validation
-  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'manufacturingDate', 'unit', 'hsnNumber'];
+  // Accept either category or categoryId; supplier or supplierId
+  const category = req.body.category || req.body.categoryId;
+  const supplier = req.body.supplier || req.body.supplierId;
+
+  // Required fields validation (align with schema; unit has a default, hsnNumber is optional)
+  const requiredFields = ['name', 'price', 'category', 'supplier', 'batchNumber', 'manufacturingDate'];
   const missingFields = requiredFields.filter(field => !req.body[field] && req.body[field] !== 0);
 
   if (missingFields.length > 0) {
@@ -212,6 +214,17 @@ const createProduct = async (req, res) => {
       productData.productId = productId.trim();
     }
 
+    // Create and save the product
+    const newProduct = new Product(productData);
+    const savedProduct = await newProduct.save();
+
+    // Populate relations before returning
+    const populatedProduct = await Product.findById(savedProduct._id)
+      .populate('supplier', 'name contactPerson phone email')
+      .populate('category', 'name status');
+
+    // Optionally trigger stock notifications
+    await handleStockNotifications(populatedProduct, populatedProduct.quantity);
 
     res.status(201).json(populatedProduct);
   } catch (error) {
