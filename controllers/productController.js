@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const ProductBatch = require('../models/ProductBatch');
 const { handleStockNotifications } = require('../utils/stockNotifications');
 
 // @desc    Fetch all products with filtering and sorting
@@ -72,10 +73,35 @@ const getProducts = async (req, res) => {
     // Get total count for pagination
     const total = await Product.countDocuments(query);
 
+    // Attach batch price summaries (latest/min/max) for the fetched products
+    const productIds = products.map(p => p._id);
+    let batchSummaries = [];
+    if (productIds.length > 0) {
+      batchSummaries = await ProductBatch.aggregate([
+        { $match: { product: { $in: productIds } } },
+        { $sort: { receivedDate: -1, updatedAt: -1, createdAt: -1 } },
+        {
+          $group: {
+            _id: '$product',
+            latestBatchPrice: { $first: '$unitCost' },
+            minBatchPrice: { $min: '$unitCost' },
+            maxBatchPrice: { $max: '$unitCost' }
+          }
+        }
+      ]);
+    }
+    const summaryMap = new Map(batchSummaries.map(s => [String(s._id), s]));
+
     const formattedProducts = products.map((product) => {
       const obj = product.toObject();
       obj.category = obj.category ? { _id: obj.category._id, name: obj.category.name, status: obj.category.status } : null;
       obj.categoryId = obj.category?._id || null;
+      const summary = summaryMap.get(String(product._id));
+      if (summary) {
+        obj.latestBatchPrice = summary.latestBatchPrice;
+        obj.minBatchPrice = summary.minBatchPrice;
+        obj.maxBatchPrice = summary.maxBatchPrice;
+      }
       return obj;
     });
 
