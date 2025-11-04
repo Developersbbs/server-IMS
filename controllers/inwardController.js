@@ -521,12 +521,48 @@ async function createNewProductFromInwardItem(item, inward) {
 
   try {
     // Find a default category (first active category)
-    const defaultCategory = await Category.findOne({ status: 'active' }).select('_id');
-    console.log('Default category found:', !!defaultCategory);
+    let defaultCategory = await Category.findOne({ status: 'active' }).select('_id');
+    console.log('Default active category found:', !!defaultCategory);
 
+    // Try by name if none active found
     if (!defaultCategory) {
-      console.log('❌ No active category found');
-      throw new Error('No active category found. Please create a category first.');
+      const generalByName = await Category.findOne({ name: 'General' }).select('_id');
+      if (generalByName) {
+        defaultCategory = generalByName;
+        console.log('Using existing "General" category by name');
+      }
+    }
+
+    // Try by slug if still not found
+    if (!defaultCategory) {
+      const generalBySlug = await Category.findOne({ slug: 'general' }).select('_id');
+      if (generalBySlug) {
+        defaultCategory = generalBySlug;
+        console.log('Using existing "general" category by slug');
+      }
+    }
+
+    // Auto-create a default category if none exists
+    if (!defaultCategory) {
+      console.log('⚠️ No active category found. Creating default "General" category...');
+      try {
+        const general = new Category({ name: 'General', description: 'Default category', status: 'active' });
+        const savedGeneral = await general.save();
+        defaultCategory = { _id: savedGeneral._id };
+        console.log('✅ Default "General" category created');
+      } catch (err) {
+        if (err && err.code === 11000) {
+          console.log('Category already created by another request, fetching it now...');
+          const existing = await Category.findOne({ $or: [{ name: 'General' }, { slug: 'general' }] }).select('_id');
+          if (existing) {
+            defaultCategory = existing;
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
     }
 
     const productData = {
@@ -715,16 +751,55 @@ const addInwardToInventory = asyncHandler(async (req, res) => {
         if (product) {
           const oldQuantity = product.quantity;
           product.quantity += item.receivedQuantity;
-          product.batchNumber = item.batchNumber;
-          product.manufacturingDate = item.manufacturingDate;
+          // Update optional fields if provided
+          if (item.batchNumber && String(item.batchNumber).trim() !== '') {
+            product.batchNumber = item.batchNumber;
+          }
+          if (item.manufacturingDate) {
+            const mfg = new Date(item.manufacturingDate);
+            if (!isNaN(mfg.getTime())) {
+              product.manufacturingDate = mfg;
+            }
+          }
           if (item.expiryDate) {
-            product.expiryDate = item.expiryDate;
+            const exp = new Date(item.expiryDate);
+            if (!isNaN(exp.getTime())) {
+              product.expiryDate = exp;
+            }
           }
           await product.save();
           console.log(`✅ Product ${product.name} updated: ${oldQuantity} → ${product.quantity}`);
         } else {
           console.error(`❌ Product with ID ${item.product} not found in database`);
           throw new Error(`Product with ID ${item.product} not found`);
+        }
+      } else if (item.product && typeof item.product === 'object' && item.product._id) {
+        console.log('✅ Existing populated product - updating quantity');
+        const product = await Product.findById(item.product._id);
+        if (product) {
+          const oldQuantity = product.quantity;
+          product.quantity += item.receivedQuantity;
+          if (item.batchNumber && String(item.batchNumber).trim() !== '') {
+            product.batchNumber = item.batchNumber;
+          }
+          if (item.manufacturingDate) {
+            const mfg = new Date(item.manufacturingDate);
+            if (!isNaN(mfg.getTime())) {
+              product.manufacturingDate = mfg;
+            }
+          }
+          if (item.expiryDate) {
+            const exp = new Date(item.expiryDate);
+            if (!isNaN(exp.getTime())) {
+              product.expiryDate = exp;
+            }
+          }
+          await product.save();
+          console.log(`✅ Product ${product.name} updated: ${oldQuantity} → ${product.quantity}`);
+        } else {
+          console.error(`❌ Product with ID ${item.product._id} not found in database`);
+          res.status(404);
+          throw new Error(`Product with ID ${item.product._id} not found`);
         }
       } else {
         console.log('🆕 New product - creating it');
@@ -733,7 +808,11 @@ const addInwardToInventory = asyncHandler(async (req, res) => {
       }
     } catch (error) {
       console.error(`❌ Error processing item ${item.productName || item.product}:`, error);
-      throw new Error(`Failed to process inventory item: ${item.productName || item.product}`);
+      // Return a 400 for validation-like errors, else 500
+      if (!res.headersSent) {
+        res.status(400);
+      }
+      throw new Error(`Failed to process inventory item: ${item.productName || item.product} - ${error.message}`);
     }
   }
 
