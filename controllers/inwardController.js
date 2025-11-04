@@ -871,5 +871,6 @@ module.exports = {
   approveInward,
   rejectInward,
   completeInward,
-  getInwardStats
+  getInwardStats,
+  addInwardToInventory
 };
