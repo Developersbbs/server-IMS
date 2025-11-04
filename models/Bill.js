@@ -7,6 +7,11 @@ const itemSchema = new mongoose.Schema({
     ref: 'Product',
     required: true
   },
+  batchNumber: {
+    type: String,
+    required: false,
+    trim: true
+  },
   name: {
     type: String,
     required: true

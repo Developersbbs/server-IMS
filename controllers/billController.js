@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const Bill = require('../models/Bill');
 const Customer = require('../models/Customer');
 const Product = require('../models/Product');
+const ProductBatch = require('../models/ProductBatch');
 const { handleStockNotifications } = require('../utils/stockNotifications');
 
 const VALID_PAYMENT_METHODS = ['cash', 'card', 'upi', 'bank_transfer', 'credit'];
@@ -161,43 +162,80 @@ exports.createBill = async (req, res) => {
     const updatedProducts = new Map();
 
     for (let index = 0; index < payload.items.length; index += 1) {
-      const item = payload.items[index];
-      if (!item?.productId) {
+      const reqItem = payload.items[index];
+      if (!reqItem?.productId) {
         throw httpError(400, `Item ${index + 1}: Product ID is required.`);
       }
 
-      const quantity = Number(item.quantity) || 0;
-      if (quantity <= 0) {
+      const requestedQty = Number(reqItem.quantity) || 0;
+      if (requestedQty <= 0) {
         throw httpError(400, `Item ${index + 1}: Quantity must be greater than 0.`);
       }
 
-      const price = roundToTwo(Number(item.price) || 0);
-      if (price < 0) {
-        throw httpError(400, `Item ${index + 1}: Price cannot be negative.`);
-      }
-
-      const total = roundToTwo(price * quantity);
-
-      const product = await Product.findById(item.productId);
+      const product = await Product.findById(reqItem.productId);
       if (!product) {
         throw httpError(400, `Item ${index + 1}: Invalid product selected.`);
       }
 
-      if (product.quantity < quantity) {
+      if (product.quantity < requestedQty) {
         throw httpError(400, `Item ${index + 1}: Only ${product.quantity} units available for '${product.name}'.`);
       }
 
-      product.quantity -= quantity;
+      let remaining = requestedQty;
+      const batchesToSave = [];
+
+      if (reqItem.batchNumber) {
+        const batch = await ProductBatch.findOne({ product: product._id, batchNumber: reqItem.batchNumber });
+        if (!batch) {
+          throw httpError(400, `Item ${index + 1}: Batch '${reqItem.batchNumber}' not found for '${product.name}'.`);
+        }
+        if (batch.quantity < remaining) {
+          throw httpError(400, `Item ${index + 1}: Only ${batch.quantity} units available in batch '${reqItem.batchNumber}' for '${product.name}'.`);
+        }
+        const price = roundToTwo(batch.unitCost);
+        const total = roundToTwo(price * remaining);
+        items.push({
+          productId: product._id,
+          batchNumber: reqItem.batchNumber,
+          name: product.name,
+          quantity: remaining,
+          price,
+          total
+        });
+        batch.quantity -= remaining;
+        batchesToSave.push(batch);
+        product.quantity -= remaining;
+        remaining = 0;
+      } else {
+        const batches = await ProductBatch.find({ product: product._id, quantity: { $gt: 0 } })
+          .sort({ receivedDate: 1, manufacturingDate: 1, createdAt: 1 });
+        for (const batch of batches) {
+          if (remaining <= 0) break;
+          const take = Math.min(remaining, batch.quantity);
+          if (take <= 0) continue;
+          const price = roundToTwo(batch.unitCost);
+          const total = roundToTwo(price * take);
+          items.push({
+            productId: product._id,
+            batchNumber: batch.batchNumber,
+            name: product.name,
+            quantity: take,
+            price,
+            total
+          });
+          batch.quantity -= take;
+          batchesToSave.push(batch);
+          product.quantity -= take;
+          remaining -= take;
+        }
+        if (remaining > 0) {
+          throw httpError(400, `Item ${index + 1}: Insufficient batch stock for '${product.name}'. Needed ${requestedQty}.`);
+        }
+      }
+
+      await Promise.all(batchesToSave.map(b => b.save({ validateModifiedOnly: true })));
       await product.save({ validateModifiedOnly: true });
       updatedProducts.set(String(product._id), product);
-
-      items.push({
-        productId: product._id,
-        name: item.name || product.name,
-        quantity,
-        price,
-        total
-      });
     }
 
     const financials = calculateFinancials({
