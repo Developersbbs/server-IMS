@@ -618,11 +618,80 @@ const approveInward = asyncHandler(async (req, res) => {
     throw new Error(`Cannot approve inward with status: ${inward.status}`);
   }
 
+  // Only update status and approval info, don't update inventory
   inward.status = 'approved';
   inward.approvedBy = req.user.id;
   inward.approvalDate = new Date();
 
-  // Update inventory for approved inwards - handle both existing and new products
+  console.log('💾 Saving approved inward...');
+  const approvedInward = await inward.save();
+  console.log('✅ Inward approved and saved successfully');
+
+  // Populate the approved inward
+  console.log('🔄 Populating approved inward...');
+  await approvedInward.populate([
+    { path: 'supplier', select: 'name email phone' },
+    { path: 'items.product', select: 'name sku' },
+    { path: 'purchaseOrder', select: 'purchaseOrderNumber' },
+    { path: 'createdBy', select: 'name email' },
+    { path: 'approvedBy', select: 'name email' }
+  ]);
+  console.log('✅ Inward populated successfully');
+
+  // Handle population for mixed product types
+  const approvedInwardObj = approvedInward.toObject ? approvedInward.toObject() : approvedInward;
+  approvedInwardObj.items = approvedInwardObj.items.map(item => ({
+    ...item,
+    product: (typeof item.product === 'string' && item.product.match(/^[0-9a-fA-F]{24}$/)) ? item.product : null
+  }));
+
+  console.log('=== APPROVE INWARD SUCCESS ===');
+  res.json(approvedInwardObj);
+});
+
+// @desc    Add products from approved inward to inventory
+// @route   PUT /api/inwards/:id/add-to-inventory
+// @access  Private/Admin
+const addInwardToInventory = asyncHandler(async (req, res) => {
+  console.log('=== ADD TO INVENTORY START ===');
+  console.log('User ID:', req.user?.id);
+  console.log('Inward ID:', req.params.id);
+
+  // Check if user is authenticated
+  if (!req.user || !req.user.id) {
+    console.log('❌ User not authenticated');
+    res.status(401);
+    throw new Error('User not authenticated');
+  }
+
+  let inward;
+  try {
+    inward = await Inward.findById(req.params.id);
+    console.log('Inward found:', !!inward);
+  } catch (error) {
+    console.error('❌ Error finding inward:', error);
+    res.status(500);
+    throw new Error('Database error while finding inward');
+  }
+
+  if (!inward) {
+    console.log('❌ Inward not found');
+    res.status(404);
+    throw new Error('Inward not found');
+  }
+
+  if (inward.status !== 'approved') {
+    console.log('❌ Cannot add to inventory - Inward is not approved');
+    res.status(400);
+    throw new Error('Only approved inwards can be added to inventory');
+  }
+
+  if (inward.inventoryAdded) {
+    console.log('❌ Inventory already added for this inward');
+    res.status(400);
+    throw new Error('Inventory already added for this inward');
+  }
+
   console.log('🔄 Processing items for inventory update...');
   for (let i = 0; i < inward.items.length; i++) {
     const item = inward.items[i];
@@ -659,30 +728,16 @@ const approveInward = asyncHandler(async (req, res) => {
     }
   }
 
-  console.log('💾 Saving approved inward...');
-  const approvedInward = await inward.save();
-  console.log('✅ Inward approved and saved successfully');
+  // Mark inward as added to inventory
+  inward.inventoryAdded = true;
+  await inward.save();
 
-  // Populate the approved inward
-  console.log('🔄 Populating approved inward...');
-  await approvedInward.populate([
-    { path: 'supplier', select: 'name email phone' },
-    { path: 'items.product', select: 'name sku' },
-    { path: 'purchaseOrder', select: 'purchaseOrderNumber' },
-    { path: 'createdBy', select: 'name email' },
-    { path: 'approvedBy', select: 'name email' }
-  ]);
-  console.log('✅ Inward populated successfully');
-
-  // Handle population for mixed product types
-  const approvedInwardObj = approvedInward.toObject ? approvedInward.toObject() : approvedInward;
-  approvedInwardObj.items = approvedInwardObj.items.map(item => ({
-    ...item,
-    product: (typeof item.product === 'string' && item.product.match(/^[0-9a-fA-F]{24}$/)) ? item.product : null
-  }));
-
-  console.log('=== APPROVE INWARD SUCCESS ===');
-  res.json(approvedInwardObj);
+  console.log('=== ADD TO INVENTORY SUCCESS ===');
+  res.json({ 
+    success: true, 
+    message: 'Products added to inventory successfully',
+    inwardId: inward._id
+  });
 });
 
 // @desc    Reject inward

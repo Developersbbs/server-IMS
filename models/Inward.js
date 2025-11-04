@@ -108,6 +108,10 @@ const inwardSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  inventoryAdded: {
+    type: Boolean,
+    default: false
+  },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

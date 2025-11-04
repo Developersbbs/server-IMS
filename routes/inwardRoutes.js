@@ -9,7 +9,8 @@ const {
   approveInward,
   rejectInward,
   completeInward,
-  getInwardStats
+  getInwardStats,
+  addInwardToInventory
 } = require('../controllers/inwardController');
 const { protect, allowRoles } = require('../middlewares/authMiddlewares');
 
@@ -30,6 +31,9 @@ router.route('/:id/reject')
 
 router.route('/:id/complete')
   .put(protect, allowRoles('superadmin', 'stockmanager'), completeInward);
+
+router.route('/:id/add-to-inventory')
+  .put(protect, allowRoles('superadmin', 'stockmanager'), addInwardToInventory);
 
 router.route('/stats/overview')
   .get(protect, getInwardStats);
