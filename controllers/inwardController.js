@@ -1,6 +1,7 @@
 const Inward = require('../models/Inward');
 const Product = require('../models/Product');
 const Category = require('../models/Category');
+const ProductBatch = require('../models/ProductBatch');
 const asyncHandler = require('express-async-handler');
 const { handleStockNotifications } = require('../utils/stockNotifications');
 
@@ -30,7 +31,6 @@ const createInward = asyncHandler(async (req, res) => {
     res.status(401);
     throw new Error('User not authenticated');
   }
-  
   console.log('✅ User authenticated:', req.user.id);
 
   // Validate items
@@ -614,6 +614,47 @@ async function createNewProductFromInwardItem(item, inward) {
   }
 }
 
+// Helper to upsert product batch for batch-level pricing
+async function upsertProductBatch(productId, item, supplierId) {
+  try {
+    if (!productId || !item?.batchNumber) {
+      return; // nothing to do
+    }
+
+    const filter = { product: productId, batchNumber: item.batchNumber };
+    const existing = await ProductBatch.findOne(filter);
+    if (existing) {
+      // Keep the original unitCost for the batch, only bump quantity and update dates if provided
+      existing.quantity += item.receivedQuantity || 0;
+      if (item.manufacturingDate) {
+        const mfg = new Date(item.manufacturingDate);
+        if (!isNaN(mfg.getTime())) existing.manufacturingDate = mfg;
+      }
+      if (item.expiryDate) {
+        const exp = new Date(item.expiryDate);
+        if (!isNaN(exp.getTime())) existing.expiryDate = exp;
+      }
+      if (supplierId) existing.supplier = supplierId;
+      await existing.save();
+      return existing;
+    } else {
+      const doc = new ProductBatch({
+        product: productId,
+        batchNumber: item.batchNumber,
+        unitCost: item.unitCost,
+        quantity: item.receivedQuantity || 0,
+        manufacturingDate: item.manufacturingDate ? new Date(item.manufacturingDate) : undefined,
+        expiryDate: item.expiryDate ? new Date(item.expiryDate) : undefined,
+        supplier: supplierId
+      });
+      return await doc.save();
+    }
+  } catch (err) {
+    console.error('❌ Error upserting product batch:', err);
+    // Don't block the main flow; surface error via logs only
+  }
+}
+
 // @desc    Approve inward
 // @route   PUT /api/inwards/:id/approve
 // @access  Private/Admin
@@ -769,6 +810,8 @@ const addInwardToInventory = asyncHandler(async (req, res) => {
           }
           await product.save();
           console.log(`✅ Product ${product.name} updated: ${oldQuantity} → ${product.quantity}`);
+          // Upsert batch record
+          await upsertProductBatch(product._id, item, inward.supplier);
         } else {
           console.error(`❌ Product with ID ${item.product} not found in database`);
           throw new Error(`Product with ID ${item.product} not found`);
@@ -796,6 +839,8 @@ const addInwardToInventory = asyncHandler(async (req, res) => {
           }
           await product.save();
           console.log(`✅ Product ${product.name} updated: ${oldQuantity} → ${product.quantity}`);
+          // Upsert batch record
+          await upsertProductBatch(product._id, item, inward.supplier);
         } else {
           console.error(`❌ Product with ID ${item.product._id} not found in database`);
           res.status(404);
@@ -804,7 +849,10 @@ const addInwardToInventory = asyncHandler(async (req, res) => {
       } else {
         console.log('🆕 New product - creating it');
         // New product - create it
-        await createNewProductFromInwardItem(item, inward);
+        const createdProduct = await createNewProductFromInwardItem(item, inward);
+        if (createdProduct?._id) {
+          await upsertProductBatch(createdProduct._id, item, inward.supplier);
+        }
       }
     } catch (error) {
       console.error(`❌ Error processing item ${item.productName || item.product}:`, error);
