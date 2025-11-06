@@ -20,7 +20,13 @@ async function syncProductBatches() {
   try {
     console.log('🔄 Starting Product Batch Sync...\n');
     
-    await mongoose.connect(process.env.MONGO_URI);
+    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
+    if (!mongoUri) {
+      console.error('❌ MongoDB URI not found in environment variables');
+      process.exit(1);
+    }
+    
+    await mongoose.connect(mongoUri);
     console.log('✅ Connected to MongoDB\n');
 
     const Product = require('./models/Product');
