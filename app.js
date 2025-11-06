@@ -14,6 +14,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const purchaseRoutes = require('./routes/purchaseRoutes');
 const inwardRoutes = require('./routes/inwardRoutes');
+const productBatchRoutes = require('./routes/productBatchRoutes');
 const { scheduleNotificationCleanup } = require('./utils/notificationCleanup');
 const cors = require("cors"); 
 const cookieParser = require('cookie-parser');
@@ -51,6 +52,7 @@ app.use('/api/bills', billRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/inwards', inwardRoutes);
+app.use('/api/product-batches', productBatchRoutes);
 
 // Add a test route to verify upload endpoint
 app.get('/api/test', (req, res) => {
