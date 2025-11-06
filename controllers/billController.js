@@ -283,6 +283,13 @@ exports.createBill = async (req, res) => {
   } catch (err) {
     console.error("Error creating bill:", err); // Log the actual error for debugging
 
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        message: err.message,
+        error: err.details || undefined
+      });
+    }
+
     // Differentiate between validation errors and server errors
     if (err.name === 'ValidationError') {
         // Extract specific error messages from Mongoose ValidationError
