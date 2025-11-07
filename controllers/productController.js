@@ -132,11 +132,32 @@ const getProductById = async (req, res) => {
       .populate('category', 'name status');
 
     if (product) {
+      // Get all batches for this product
+      const batches = await ProductBatch.find({ product: product._id, quantity: { $gt: 0 } })
+        .sort({ receivedDate: -1, updatedAt: -1 });
+
       const formattedProduct = product.toObject();
       formattedProduct.category = formattedProduct.category
         ? { _id: formattedProduct.category._id, name: formattedProduct.category.name, status: formattedProduct.category.status }
         : null;
       formattedProduct.categoryId = formattedProduct.category?._id || null;
+      
+      // Add batch information to the product
+      formattedProduct.batches = batches.map(batch => ({
+        _id: batch._id,
+        batchNumber: batch.batchNumber,
+        quantity: batch.quantity,
+        unitCost: batch.unitCost,
+        receivedDate: batch.receivedDate,
+        expiryDate: batch.expiryDate,
+        manufacturingDate: batch.manufacturingDate
+      }));
+
+      // If there are batches, set the price to the latest batch price
+      if (batches.length > 0) {
+        formattedProduct.price = batches[0].unitCost;
+      }
+
       res.status(200).json(formattedProduct);
     } else {
       res.status(404).json({ message: 'Product not found' });
