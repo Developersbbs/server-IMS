@@ -466,9 +466,19 @@ const updateInward = asyncHandler(async (req, res) => {
 
   // Update fields
   if (supplier !== undefined) inward.supplier = supplier;
-  if (items !== undefined) inward.items = items;
   if (invoiceNumber !== undefined) inward.invoiceNumber = invoiceNumber;
   if (invoiceDate !== undefined) inward.invoiceDate = invoiceDate;
+  if (deliveryChallanNumber !== undefined) inward.deliveryChallanNumber = deliveryChallanNumber;
+  if (vehicleNumber !== undefined) inward.vehicleNumber = vehicleNumber;
+  if (notes !== undefined) inward.notes = notes;
+  if (qualityCheckStatus !== undefined) inward.qualityCheckStatus = qualityCheckStatus;
+  if (qualityCheckNotes !== undefined) inward.qualityCheckNotes = qualityCheckNotes;
+  
+  // Recalculate total amount
+  if (items) {
+    inward.totalAmount = inward.items.reduce((total, item) => total + (item.receivedQuantity * item.unitCost), 0);
+  }
+  
   const updatedInward = await inward.save();
 
   // Populate the updated inward
