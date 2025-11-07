@@ -140,20 +140,32 @@ inwardSchema.index({ supplier: 1, status: 1 });
 inwardSchema.index({ receivedDate: -1 });
 inwardSchema.index({ status: 1, createdAt: -1 });
 
+// Create a counter collection for GRN numbers
+const Counter = mongoose.models.Counter || 
+  mongoose.model('Counter', new mongoose.Schema({
+    _id: { type: String, required: true },
+    seq: { type: Number, default: 0 }
+  }));
+
 // Generate GRN number before validation
 inwardSchema.pre('validate', async function(next) {
   if (this.isNew && !this.grnNumber) {
     try {
       console.log('🔢 Generating GRN number...');
-      const count = await this.constructor.countDocuments();
-      console.log('📊 Current inward count:', count);
-      
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, '0');
       const day = String(today.getDate()).padStart(2, '0');
-
-      this.grnNumber = `GRN-${year}${month}${day}-${String(count + 1).padStart(4, '0')}`;
+      const dateStr = `${year}${month}${day}`;
+      
+      // Find and increment the counter for today's date
+      const counter = await Counter.findByIdAndUpdate(
+        { _id: `grn_${dateStr}` },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+      
+      this.grnNumber = `GRN-${dateStr}-${String(counter.seq).padStart(4, '0')}`;
       console.log('✅ Generated GRN number:', this.grnNumber);
     } catch (error) {
       console.error('❌ Error generating GRN number:', error);
@@ -161,6 +173,19 @@ inwardSchema.pre('validate', async function(next) {
     }
   }
   next();
+});
+
+// Add error handling for duplicate GRN numbers
+inwardSchema.post('save', function(error, doc, next) {
+  if (error.name === 'MongoServerError' && error.code === 11000) {
+    // If it's a duplicate key error for grnNumber
+    if (error.keyPattern && error.keyPattern.grnNumber) {
+      // Remove the grnNumber and save again (will generate a new one)
+      doc.grnNumber = undefined;
+      return doc.save().then(() => next()).catch(next);
+    }
+  }
+  next(error);
 });
 
 // Calculate item totals and total amount before saving
