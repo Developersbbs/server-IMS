@@ -73,35 +73,56 @@ const getProducts = async (req, res) => {
     // Get total count for pagination
     const total = await Product.countDocuments(query);
 
-    // Attach batch price summaries (latest/min/max) for the fetched products
+    // Get all batches for the products
     const productIds = products.map(p => p._id);
-    let batchSummaries = [];
+    let batches = [];
     if (productIds.length > 0) {
-      batchSummaries = await ProductBatch.aggregate([
-        { $match: { product: { $in: productIds } } },
-        { $sort: { receivedDate: -1, updatedAt: -1, createdAt: -1 } },
-        {
-          $group: {
-            _id: '$product',
-            latestBatchPrice: { $first: '$unitCost' },
-            minBatchPrice: { $min: '$unitCost' },
-            maxBatchPrice: { $max: '$unitCost' }
-          }
-        }
-      ]);
+      batches = await ProductBatch.find({ 
+        product: { $in: productIds },
+        quantity: { $gt: 0 } // Only include batches with available stock
+      }).sort({ receivedDate: -1, updatedAt: -1 });
     }
-    const summaryMap = new Map(batchSummaries.map(s => [String(s._id), s]));
+
+    // Group batches by product
+    const batchesByProduct = batches.reduce((acc, batch) => {
+      const productId = String(batch.product);
+      if (!acc[productId]) {
+        acc[productId] = [];
+      }
+      acc[productId].push({
+        _id: batch._id,
+        batchNumber: batch.batchNumber,
+        quantity: batch.quantity,
+        unitCost: batch.unitCost,
+        receivedDate: batch.receivedDate,
+        expiryDate: batch.expiryDate,
+        manufacturingDate: batch.manufacturingDate
+      });
+      return acc;
+    }, {});
 
     const formattedProducts = products.map((product) => {
       const obj = product.toObject();
-      obj.category = obj.category ? { _id: obj.category._id, name: obj.category.name, status: obj.category.status } : null;
+      obj.category = obj.category ? { 
+        _id: obj.category._id, 
+        name: obj.category.name, 
+        status: obj.category.status 
+      } : null;
       obj.categoryId = obj.category?._id || null;
-      const summary = summaryMap.get(String(product._id));
-      if (summary) {
-        obj.latestBatchPrice = summary.latestBatchPrice;
-        obj.minBatchPrice = summary.minBatchPrice;
-        obj.maxBatchPrice = summary.maxBatchPrice;
+      
+      // Add batch information to the product
+      const productBatches = batchesByProduct[product._id] || [];
+      obj.batches = productBatches;
+      
+      // Update price to latest batch price if available
+      if (productBatches.length > 0) {
+        obj.price = productBatches[0].unitCost;
+        obj.batchNumber = productBatches[0].batchNumber;
+        obj.latestBatchPrice = productBatches[0].unitCost;
+        obj.minBatchPrice = Math.min(...productBatches.map(b => b.unitCost));
+        obj.maxBatchPrice = Math.max(...productBatches.map(b => b.unitCost));
       }
+      
       return obj;
     });
 
