@@ -243,13 +243,14 @@ const getInwards = asyncHandler(async (req, res) => {
     if (endDate) query.receivedDate.$lte = new Date(endDate);
   }
 
-  // Search by GRN number, invoice number, or notes
+  // Search by GRN number, invoice number, notes, or product names in items
   if (search) {
     query.$or = [
       { grnNumber: { $regex: search, $options: 'i' } },
       { invoiceNumber: { $regex: search, $options: 'i' } },
       { deliveryChallanNumber: { $regex: search, $options: 'i' } },
-      { notes: { $regex: search, $options: 'i' } }
+      { notes: { $regex: search, $options: 'i' } },
+      { 'items.productName': { $regex: search, $options: 'i' } }
     ];
   }
   const options = {
