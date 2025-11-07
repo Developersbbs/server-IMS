@@ -481,23 +481,48 @@ const updateInward = asyncHandler(async (req, res) => {
   
   const updatedInward = await inward.save();
 
-  // Populate the updated inward
-  await updatedInward.populate([
-    { path: 'supplier', select: 'name email phone' },
-    { path: 'items.product', select: 'name sku' },
-    { path: 'purchaseOrder', select: 'purchaseOrderNumber' },
-    { path: 'createdBy', select: 'name email' },
-    { path: 'approvedBy', select: 'name email' }
-  ]);
+  try {
+    // Populate the updated inward with proper error handling
+    const populatedInward = await Inward.findById(updatedInward._id)
+      .populate([
+        { path: 'supplier', select: 'name email phone' },
+        { path: 'items.product', select: 'name sku', strictPopulate: false },
+        { path: 'purchaseOrder', select: 'purchaseOrderNumber' },
+        { path: 'createdBy', select: 'name email' },
+        { path: 'approvedBy', select: 'name email' }
+      ])
+      .lean();
 
-  // Handle population for mixed product types
-  const updatedInwardObj = updatedInward.toObject ? updatedInward.toObject() : updatedInward;
-  updatedInwardObj.items = updatedInwardObj.items.map(item => ({
-    ...item,
-    product: (typeof item.product === 'string' && item.product.match(/^[0-9a-fA-F]{24}$/)) ? item.product : null
-  }));
+    // Ensure items have proper product references
+    if (populatedInward.items) {
+      populatedInward.items = populatedInward.items.map(item => {
+        // Handle cases where product might be null or invalid
+        let product = item.product;
+        if (!product || (typeof product === 'object' && !product._id)) {
+          product = null;
+        } else if (typeof product === 'string' && product.match(/^[0-9a-fA-F]{24}$/)) {
+          // Keep the product ID if it's a valid ObjectId string
+          product = product;
+        } else if (product && product._id) {
+          // Keep the populated product
+          product = product._id;
+        } else {
+          product = null;
+        }
+        
+        return {
+          ...item,
+          product: product
+        };
+      });
+    }
 
-  res.json(updatedInwardObj);
+    res.json(populatedInward);
+  } catch (error) {
+    console.error('Error populating inward:', error);
+    // If population fails, return the basic updated inward
+    res.json(updatedInward);
+  }
 });
 
 // @desc    Delete inward
