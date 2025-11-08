@@ -16,29 +16,84 @@ const purchaseRoutes = require('./routes/purchaseRoutes');
 const inwardRoutes = require('./routes/inwardRoutes');
 const productBatchRoutes = require('./routes/productBatchRoutes');
 const { scheduleNotificationCleanup } = require('./utils/notificationCleanup');
-const cors = require("cors"); 
+const cors = require("cors");
 const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('express-mongo-sanitize');
 
 const app = express();
 
-// Connect to database
+// Connect to database FIRST
 connectDB();
 require('./config/firebaseAdmin'); 
 
-// CORS config
+// CORS config - MUST BE BEFORE HELMET
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5000',
+  'https://bejewelled-florentine-dae7a2.netlify.app'
+];
+
+// Simplified CORS configuration
 const corsOptions = {
-  // origin: "https://bejewelled-florentine-dae7a2.netlify.app",
-  origin:"https://bejewelled-florentine-dae7a2.netlify.app",
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // In development, allow all origins for easier testing
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    // In production, only allow specific origins
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    console.log('CORS blocked for origin:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
+  exposedHeaders: ['x-csrf-token'],
+  optionsSuccessStatus: 200,
+  preflightContinue: false
 };
+
+// Apply CORS middleware FIRST - must be before helmet and routes
 app.use(cors(corsOptions));
+
+// Security middleware - Configure helmet to work with CORS
+app.use(helmet({
+  crossOriginResourcePolicy: false, // Disable CORP to allow CORS
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+}));
+
+// Rate limiting - More lenient for development
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500, // Increased from 100 to 500 requests per windowMs
+  message: 'Too many requests from this IP, please try again after 15 minutes',
+  skip: (req) => {
+    // Skip rate limiting in development
+    return process.env.NODE_ENV !== 'production';
+  }
+});
+app.use(limiter);
+
 
 // Middleware
 app.use(express.json({ limit: '10mb' })); // Increase limit for file uploads
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+
+// Handle preflight requests explicitly
+app.options('*', cors(corsOptions));
 
 // Routes - ORDER MATTERS!
 app.use('/api/auth', authRoutes);

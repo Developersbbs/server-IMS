@@ -7,7 +7,6 @@ const userSchema = new mongoose.Schema({
     required: true,
     unique: true,
   },
-  
   email: {
     type: String,
     required: true,
@@ -17,11 +16,24 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  role:{
-   type:String,
-   enum:["superadmin", "stockmanager", "billcounter"],
-   default:"billcounter",
+  role: {
+    type: String,
+    enum: ["superadmin", "stockmanager", "billcounter"],
+    default: "billcounter",
   },
+  status: {
+    type: String,
+    enum: ["active", "inactive", "suspended"],
+    default: "active"
+  },
+  failedLoginAttempts: {
+    type: Number,
+    default: 0
+  },
+  lastFailedLogin: {
+    type: Date,
+    default: null
+  }
 });
 
 // Hash password before saving

@@ -10,7 +10,8 @@ const {
   getCategories,
   getLowStockProducts,
   bulkUpdateProducts,
-  getProductReport
+  getProductReport,
+  getProductStats
 } = require('../controllers/productController');
 const { protect, allowRoles } = require('../middlewares/authMiddlewares');
 
@@ -18,6 +19,7 @@ const router = express.Router();
 
 // Public routes
 router.get('/categories', protect, getCategories); // Must be before /:id route
+router.get('/stats', protect, getProductStats); // Must be before /:id route
 router.get('/report', protect, allowRoles("superadmin", "stockmanager"), getProductReport);
 router.get('/', protect, getProducts);
 router.get('/:id', protect, getProductById);

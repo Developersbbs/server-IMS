@@ -661,6 +661,73 @@ const getProductReport = async (req, res) => {
   }
 };
 
+// @desc    Get product statistics
+// @route   GET /api/products/stats
+// @access  Private
+const getProductStats = async (req, res) => {
+  try {
+    const products = await Product.find({})
+      .populate('category', 'name status');
+
+    // Calculate statistics
+    let total = products.length;
+    let inStock = 0;
+    let lowStock = 0;
+    let outOfStock = 0;
+    let totalValue = 0;
+    let categories = {};
+    let priceRanges = {};
+
+    products.forEach(product => {
+      const quantity = product.quantity || 0;
+      const price = product.price || 0;
+
+      // Calculate stock status
+      const displayQuantity = product.unit === 'liter' ? (quantity / 1000) :
+                             product.unit === 'kilogram' ? (quantity / 1000) : quantity;
+
+      if (displayQuantity === 0) {
+        outOfStock++;
+      } else if (displayQuantity <= 10) {
+        lowStock++;
+      } else {
+        inStock++;
+      }
+
+      // Calculate total value
+      totalValue += price * quantity;
+
+      // Count categories
+      const categoryName = product.category?.name || 'No Category';
+      categories[categoryName] = (categories[categoryName] || 0) + 1;
+
+      // Count price ranges
+      let range;
+      if (price < 100) range = 'Under ₹100';
+      else if (price < 500) range = '₹100 - ₹499';
+      else if (price < 1000) range = '₹500 - ₹999';
+      else if (price < 5000) range = '₹1,000 - ₹4,999';
+      else range = '₹5,000+';
+      priceRanges[range] = (priceRanges[range] || 0) + 1;
+    });
+
+    res.status(200).json({
+      total,
+      inStock,
+      lowStock,
+      outOfStock,
+      totalValue,
+      categories,
+      priceRanges
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: 'Server Error: Could not fetch product statistics.',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   getProducts,
   getProductById,
@@ -672,4 +739,5 @@ module.exports = {
   getLowStockProducts,
   bulkUpdateProducts,
   getProductReport,
+  getProductStats,
 };
