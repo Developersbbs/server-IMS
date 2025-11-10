@@ -33,36 +33,52 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:5000',
-  'https://bejewelled-florentine-dae7a2.netlify.app'
+  'https://bejewelled-florentine-dae7a2.netlify.app',
+  'https://bejewelled-florentine-dae7a2.netlify.app/'
 ];
 
-// Simplified CORS configuration
+// Enhanced CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) {
+      console.log('No origin - allowing request');
+      return callback(null, true);
+    }
+    
+    // Normalize origin by removing trailing slash for consistent comparison
+    const normalizedOrigin = origin.endsWith('/') ? origin.slice(0, -1) : origin;
+    
+    // Check if origin is in allowed origins
+    if (allowedOrigins.includes(normalizedOrigin) || 
+        allowedOrigins.includes(normalizedOrigin + '/')) {
+      console.log('CORS allowed for origin:', normalizedOrigin);
       return callback(null, true);
     }
     
     // In development, allow all origins for easier testing
     if (process.env.NODE_ENV !== 'production') {
+      console.log('Development mode - allowing origin:', normalizedOrigin);
       return callback(null, true);
     }
     
-    // In production, only allow specific origins
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    console.log('CORS blocked for origin:', origin);
-    return callback(new Error('Not allowed by CORS'));
+    console.log('CORS blocked for origin:', normalizedOrigin);
+    return callback(new Error(`Not allowed by CORS. Origin: ${normalizedOrigin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-csrf-token'],
-  exposedHeaders: ['x-csrf-token'],
-  optionsSuccessStatus: 200,
-  preflightContinue: false
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'x-csrf-token',
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['x-csrf-token', 'set-cookie'],
+  optionsSuccessStatus: 204,
+  preflightContinue: false,
+  maxAge: 600 // 10 minutes
 };
 
 // Apply CORS middleware FIRST - must be before helmet and routes
