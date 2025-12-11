@@ -34,7 +34,9 @@ const allowedOrigins = [
   'http://127.0.0.1:5173',
   'http://localhost:5000',
   'https://bejewelled-florentine-dae7a2.netlify.app',
-  'https://bejewelled-florentine-dae7a2.netlify.app/'
+  'https://bejewelled-florentine-dae7a2.netlify.app/',
+  'https://app.shreesaiepoxy.com',
+  'https://app.shreesaiepoxy.com/'
 ];
 
 // Enhanced CORS configuration
@@ -138,7 +140,7 @@ app.use((error, req, res, next) => {
     error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error' 
   });
 });
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5005;
 
 // Function to find an available port
 const findAvailablePort = (startPort) => {
